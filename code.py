@@ -1,10 +1,12 @@
 import subprocess
 import sys
 subprocess.check_call([sys.executable, "-m", "pip", "install", "nltk"])
+subprocess.check_call([sys.executable, "-m", "pip", "install", "imblearn"])
 
 import numpy as np
 import pandas as pd
 import re
+from imblearn.over_sampling import SMOTE
 
 import nltk
 nltk.download('stopwords')
@@ -117,15 +119,33 @@ class SentimentAnalyzer:
         tokens = word_tokenize(cleaned_text)
 
         # Remove stopwords
-        tokens = self.remove_stopwords(tokens)
+        #tokens = self.remove_stopwords(tokens)
 
         # Lemmatize
-        tokens = self.lemmatize_text(tokens)
+        #tokens = self.lemmatize_text(tokens)
 
         # Join tokens back into text
         row['text'] = ' '.join(tokens)
 
         return row
+
+    def balance_dataset(self, df):
+        # Convert text data to TF-IDF features
+        tfidf_vectorizer = TfidfVectorizer()
+        X_tfidf = tfidf_vectorizer.fit_transform(df['text'])
+
+        # Apply SMOTE to balance the dataset
+        smote = SMOTE(random_state=self.registration_number)
+        X_resampled, y_resampled = smote.fit_resample(X_tfidf, df['sentiment'])
+
+        # Convert resampled TF-IDF features back to text
+        inverse_transform = tfidf_vectorizer.inverse_transform(X_resampled)
+        resampled_texts = [" ".join(tokens) for tokens in inverse_transform]
+
+        # Create a new DataFrame with resampled data
+        resampled_df = pd.DataFrame({'text': resampled_texts, 'sentiment': y_resampled})
+
+        return resampled_df
 
     def get_train_data(self, train_file, val_file):
         """
@@ -241,7 +261,8 @@ class SentimentAnalyzer:
         print("*************************************")
 
         # Get train and validation data
-        train_df, val_df = self.get_train_data(train_file, val_file)
+        train_df_unbal, val_df = self.get_train_data(train_file, val_file)
+        train_df = self.balance_dataset(train_df_unbal)
 
         # Split into train and test sets
         X_train, X_test, y_train, y_test = train_test_split(
@@ -375,7 +396,8 @@ class SentimentAnalyzer:
         print("*********************************")
         print("----DISCRIMINATIVE MODEL: SVM----")
         print("*********************************")
-        train_df, val_df = self.get_train_data(train_file, val_file)
+        train_df_unbal, val_df = self.get_train_data(train_file, val_file)
+        train_df = self.balance_dataset(train_df_unbal)
 
         # Split into train and test sets
         X_train, X_test, y_train, y_test = train_test_split(
@@ -445,4 +467,4 @@ gen = SentimentAnalyzer()
 gen.train_gen(train_file='./data/train.csv', val_file='./data/valid.csv')
 
 dis = SentimentAnalyzer()
-#dis.train_dis(train_file='./data/train.csv', val_file='./data/valid.csv')
+dis.train_dis(train_file='./data/train.csv', val_file='./data/valid.csv')
