@@ -160,6 +160,54 @@ class SentimentAnalyzer:
 
         return train_df, val_df
 
+    def gen_find_optimal_params(self, X_train, y_train, cv=5):
+        """
+        Find optimal parameters for both CountVectorizer and MultinomialNB
+        """
+        # Convert string labels to numerical values
+        y_train_encoded = self.label_encoder.fit_transform(y_train)
+
+        # Define the pipeline
+        pipeline = Pipeline([
+            ('vectorizer', CountVectorizer()),
+            ('nb', MultinomialNB())
+        ])
+
+        # Define parameter grid
+        param_grid = {
+            'vectorizer__max_features': [1000, 2000, 3000],
+            'vectorizer__ngram_range': [(1, 2), (1, 3)],
+            'vectorizer__min_df': [2, 3],  # Minimum document frequency
+            'nb__fit_prior': [True, False]  # Whether to learn class prior probabilities
+        }
+
+        # Perform grid search
+        grid_search = GridSearchCV(
+            pipeline,
+            param_grid,
+            cv=cv,
+            n_jobs=-1,
+            scoring='f1_macro',
+            verbose=1
+        )
+
+        print("Starting grid search...")
+        grid_search.fit(X_train, y_train_encoded)
+
+        print(f"\nBest parameters: {grid_search.best_params_}")
+        print(f"Best cross-validation score: {grid_search.best_score_:.3f}")
+
+        # Print top 3 parameter combinations
+        results_df = pd.DataFrame(grid_search.cv_results_)
+        top_3 = results_df.nlargest(3, 'mean_test_score')
+        print("\nTop 3 parameter combinations:")
+        for idx, row in top_3.iterrows():
+            print(f"\nRank {row['rank_test_score']}:")
+            print(f"Parameters: {row['params']}")
+            print(f"Mean CV Score: {row['mean_test_score']:.3f} (+/- {row['std_test_score'] * 2:.3f})")
+
+        return grid_search.best_params_
+
     def train_gen(self, train_file, val_file):
         """
         Trains a Naive Bayes model for sentiment classification.
@@ -181,24 +229,69 @@ class SentimentAnalyzer:
         print("----GENERATIVE MODEL: NAIVE BAYES----")
         print("*************************************")
 
+        # Get train and validation data
         train_df, val_df = self.get_train_data(train_file, val_file)
 
-        # Convert text to feature vectors
-        vectorizer = CountVectorizer(max_features=6000, ngram_range=(1, 2))
-        X = vectorizer.fit_transform(train_df['text'])
-
         # Split into train and test sets
-        X_train, X_test, y_train, y_test = train_test_split(X, train_df['sentiment'], test_size=0.2, random_state=self.registration_number)
+        X_train, X_test, y_train, y_test = train_test_split(
+            train_df['text'],
+            train_df['sentiment'],
+            test_size=0.2,
+            random_state=self.registration_number
+        )
 
-        # Train Naive Bayes model
-        model = MultinomialNB()
-        model.fit(X_train, y_train)
+        # Find optimal parameters
+        print("Finding optimal parameters...")
+        best_params = self.gen_find_optimal_params(X_train, y_train)
 
-        # Predict and evaluate
-        y_pred = model.predict(X_test)
+        # Extract best parameters
+        vectorizer_params = {k.replace('vectorizer__', ''): v
+                             for k, v in best_params.items()
+                             if k.startswith('vectorizer__')}
+        nb_params = {k.replace('nb__', ''): v
+                     for k, v in best_params.items()
+                     if k.startswith('nb__')}
+
+        print("\nTraining final model with:")
+        print(f"Vectorizer parameters: {vectorizer_params}")
+        print(f"Naive Bayes parameters: {nb_params}")
+
+        # Initialize vectorizer with optimal parameters
+        vectorizer = CountVectorizer(**vectorizer_params)
+        X_train_vec = vectorizer.fit_transform(X_train)
+        X_test_vec = vectorizer.transform(X_test)
+
+        # Encode labels
+        y_train_encoded = self.label_encoder.fit_transform(y_train)
+
+        # Train the model with optimal parameters
+        model = MultinomialNB(**nb_params)
+        model.fit(X_train_vec, y_train_encoded)
+
+        # Evaluate the model
+        y_pred_encoded = model.predict(X_test_vec)
+        y_pred = self.label_encoder.inverse_transform(y_pred_encoded)
         self.evaluation_results(y_test, y_pred)
 
-    def dis_find_optimal_ngrams(self, X_train, y_train, cv=5):
+        # Optionally analyze feature importance
+        self.analyze_features(vectorizer, model)
+
+        return vectorizer, model
+
+    def analyze_features(self, vectorizer, model):
+        """
+        Analyze and print most informative features for each class
+        """
+        feature_names = vectorizer.get_feature_names_out()
+
+        print("\nMost informative features:")
+        for i, category in enumerate(self.label_encoder.classes_):
+            top_features = sorted(zip(model.feature_log_prob_[i], feature_names), reverse=True)[:10]
+            print(f"\nTop 10 features for {category}:")
+            for score, feature in top_features:
+                print(f"{feature}: {score:.3f}")
+
+    def dis_find_optimal_params(self, X_train, y_train, cv=5):
         """
         Find optimal n-gram range using cross-validation
         """
@@ -267,7 +360,7 @@ class SentimentAnalyzer:
 
         # Find optimal parameters
         print("Finding optimal n-gram range...")
-        best_params = self.dis_find_optimal_ngrams(X_train, y_train)
+        best_params = self.dis_find_optimal_params(X_train, y_train)
 
         # Extract best parameters
         ngram_range = best_params['tfidf__ngram_range']
