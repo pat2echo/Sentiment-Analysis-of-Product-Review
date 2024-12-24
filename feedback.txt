@@ -1,0 +1,76 @@
+CE807 – Assignment  - Final Practical Text Analytics and Report
+Student ID:  2320824
+
+Task1: Model Selection
+	 -1 Discriminative Classifier Selected
+	 -1 Unsupervised Classifier Selected
+Task1: Critical discussion and justification of model selection
+	 -Model Selection Discussion
+	 -Model Selection Justification
+	 -Data type is not considered in the model selection justification
+Task 2: Design and implementation of classifiers
+	 -Model implementation (Method 1) as described in the report
+	 -Model implementation (Method 2) as described in the report
+	 -Validation set not used for the best model selection (Method 1)
+	 -Validation set not used for the best model selection (Method 2)
+	 -No Parameter Search (Method 1)
+	 -No Parameter Search (Method 2)
+Task2:  High-quality code including comments and printing required measures etc
+	 -Required printing is provided
+	 -Modular coding needs improvement
+Task3: Providing Justification of Model performance and comparing with SoTA
+	 -Found paper with SoTA result
+	 -Result compare to SoTA
+	 -SoTA model need to be on the same data split
+	 -How did you get the test data details (Table 1) when it was not provided
+Task3: Example Selection and it’s explanation, and other analysis
+	 -5 interesting examples selected
+	 -Explanation for selected 5 examples provided
+	 -Compared Model output difference
+Task4: Lessons learned
+	 -Lesson learned is reported
+	 -Lesson learned is presented
+Task4:  Material submitted in appropriate format
+	 -Report in appropriate format
+	 -Shared Model and output files
+	 -Presentation Shared
+	 -Face, slide, and audio working in Presentation
+	 -only report submitted
+
+ Model's performance on the testset
+	 -Dataset number was provided as a part of the assignment. You were suppose to use that. Your output file or one or both output data column was not in appropriate format.
+
+ 
+Some other comments on unsupervised learning, other models and evaluation. 
+
+In unsupervised classification selecting K=2 or topic=2 might not be sufficient. 
+This assumes that this is the optimal case and that your data is linearly separable, which is impossible. 
+One way to do this is the following.
+
+	 1. K = 10 (say)
+	 2. Perform clustering/topic modeling using training data using K
+	 3. Now, you must determine whether a cluster is for Class A or B. Use the validation set (remember you have labels for this set) using the max voting mechanism as follows.  
+	 	 3.1 For each data point in the validation set, determine which cluster it belongs to
+	 	 3.2 count how many Class A and B data points belong to a cluster and assign the cluster(centroid) to that class based on the maximum. Class A = 10 and Class B = 4, then that cluster is Class A. 
+	 	 3.3 Above will assign each cluster a class 
+	 4. Perform the above steps based on different K, say [10,15,20], and select K, which gives the best F1 score on the validation set.
+	 5. Use select cluster and test on the test set and report performance.    
+
+This is one of the simplest ones; further modifications are possible.  
+
+The goal of effect of different pre-processing is to show how it has effect on overall performance. 
+	 1. Do the pre-processing only when that effect is present. For example, if no URL is present in the train/valid/test data then there is no need for URL removal. 
+	 2. If you have done a pre-processing, say stopword removal. Performance with and without stopword removal should be reported then only one will know that stopword removal improved the performance or not. 
+
+
+Other Common Points:
+
+	 1. Your model outputs only one class, this means your model needs to be learning and needs refinement or change.
+	 2. Your model's F1 score (=1) on the training set means you are overfitting the training data and needs refinement.
+	 3. You can't use the training set label for unsupervised classification but can use the validation set label to select the best parameters. That is, you can't perform clustering and pass it through, say, SVM. 
+	 4. You were supposed to justify all your choices. For example, why you used TF-IDF or BERT tokenizer for the clustering. 
+	 5. Ensure that your model is good/learned something based on the data. One way to do that is to compare it with the majority and minority baseline models. Let's say in the training set, ClassA occurs more than ClassB. The majority baseline is when all data is marked ClassA, and in the case of the minority, it is marked ClassB.   Calculate the F1 score, if your model is not performing better than this, which means that the model is not good enough. You should update the parameters of the model or change the model.
+	 6. Training word2vec on the training data will not give good representation. word2vec training requires large ammount of data. Ideally one should use pre-trained model. 
+	 7. BERT or similar models are semi-supervised training. The moment AutoModelForSequenceClassification.from_pretrained is used, it becomes supervised training. 
+	 8. When BERT like model is used, look carefully pre-processing might not be effective. 
+
