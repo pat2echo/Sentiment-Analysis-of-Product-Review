@@ -1,6 +1,20 @@
+import subprocess
+import sys
+subprocess.check_call([sys.executable, "-m", "pip", "install", "nltk"])
+
 import numpy as np
 import pandas as pd
 import re
+
+import nltk
+nltk.download('stopwords')
+nltk.download('punkt_tab')
+nltk.download('wordnet')
+
+from nltk.tokenize import word_tokenize
+from nltk.corpus import stopwords
+from nltk.stem import WordNetLemmatizer
+
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.naive_bayes import MultinomialNB
 
@@ -9,12 +23,18 @@ from sklearn.svm import SVC
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, f1_score
+
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import LabelEncoder
 
 class SentimentAnalyzer:
     def __init__(self):
         self.registration_number = 2320824
+        self.label_encoder = LabelEncoder()
+
+        # Custom Created Dataset for first-level-validation
         self.reviews = [
             "This product is great, highly recommend!", "Terrible quality, do not buy.", "Good value for the price.",
             "Worst purchase I made.", "Amazing product, will buy again!", "Not worth the money.",
@@ -24,15 +44,35 @@ class SentimentAnalyzer:
         self.labels = ["positive", "negative", "positive", "negative", "positive", "negative", "positive", "negative",
           "positive", "negative"]
 
-    def clean_text(self, row):
-        # Preserve original text
-        original_text = row['text']
+        self.lemmatizer = WordNetLemmatizer()
+        self.stop_words = set(stopwords.words('english'))
 
+        # Add domain-specific stopwords
+        self.stop_words.update(['product', 'item', 'buy', 'purchased'])
+
+    def clean_text(self, original_text):
+        """
+        Cleans the text in the given row for further processing.
+
+        Args:
+            original_text: String to be cleaned
+
+        Returns:
+            A Pandas Series with the cleaned text in the 'text' column.
+
+        This function performs the following cleaning steps:
+            1. Removes URLs.
+            2. Removes video tags.
+            3. Strips HTML tags.
+            4. Removes non-alphabetic characters.
+            5. Removes double spaces.
+            6. Converts text to lowercase.
+        """
+        text = ''
         if isinstance(original_text, str):
             # Remove URLs
             text = re.sub(r'http\S+|www\S+|https\S+', '', original_text, flags=re.MULTILINE)
             # Remove video tags
-            # text = re.sub(r'\[video.*?\].*?\[/video\]', '', text, flags=re.MULTILINE)
             text = re.sub(r'(?i)\[\[video.*?\]\]', '', text)
             # Strip HTML tags
             text = re.sub(r'<br.*?>', '\n', text)
@@ -40,48 +80,111 @@ class SentimentAnalyzer:
             text = re.sub(r'<.*?>', ' ', text)
 
             # Remove non-alphabetic characters
-            text = re.sub(r'[^a-zA-Z\s]', '', text)
+            text = re.sub(r'[^a-zA-Z\s]', ' ', text)
 
             # Remove double spaces
             text = re.sub(r'  ', ' ', text)
+
             # Convert to lower case
             text = text.lower()
 
-            # Truncate text to the maximum number of words that the model can handle
-            tokens = text.split()
-            wc = len(tokens)
-            max_words = 200
-            if wc > max_words:
-                text = ' '.join(tokens[:max_words])
+        return text
 
-            row['text'] = text
+    def truncate_text(self, tokens):
+        """Truncate text to the maximum number of words that the model can handle"""
+        wc = len(tokens)
+        max_words = 500
+        if wc > max_words:
+            tokens = tokens[:max_words]
+        return tokens
+
+    def remove_stopwords(self, tokens):
+        """Remove stopwords from tokenized text"""
+        return [token for token in tokens if token not in self.stop_words]
+
+    def lemmatize_text(self, tokens):
+        """Lemmatize tokens"""
+        return [self.lemmatizer.lemmatize(token) for token in tokens]
+
+    def preprocess(self, row):
+        """Complete preprocessing pipeline"""
+        text = row['text']
+
+        # Clean text
+        cleaned_text = self.clean_text(text)
+
+        # Tokenize
+        tokens = word_tokenize(cleaned_text)
+
+        # Remove stopwords
+        tokens = self.remove_stopwords(tokens)
+
+        # Lemmatize
+        tokens = self.lemmatize_text(tokens)
+
+        # Join tokens back into text
+        row['text'] = ' '.join(tokens)
 
         return row
 
     def get_train_data(self, train_file, val_file):
+        """
+        Loads and preprocesses training and validation data.
+
+        Args:
+            train_file: Path to the training data CSV file.
+            val_file: Path to the validation data CSV file.
+
+        Returns:
+            A tuple containing:
+                - train_df: Preprocessed training DataFrame.
+                - val_df: Preprocessed validation DataFrame.
+
+        This function performs the following steps:
+            1. Loads training and validation data from CSV files.
+            2. Drops rows with missing values (NaN).
+            3. Applies text cleaning to the training data.
+            4. Prints the number of records in each dataset.
+
+        """
         train_df = pd.read_csv(train_file)
         val_df = pd.read_csv(val_file)
 
         # train_data = train_df.sample(frac=0.1).reset_index(drop=True)  # Shuffling and selecting 10% of data
         #print(train_df[train_df.isna().any(axis=1)])
+        train_df = train_df.dropna().apply(self.preprocess, axis=1)
+        val_df = val_df.dropna().apply(self.preprocess, axis=1)
         print(train_df.head())
-        train_df = train_df.dropna().apply(self.clean_text, axis=1)
         print(f'Training data: {len(train_df)} records')
         print(f'Validation data: {len(val_df)} records')
 
         return train_df, val_df
 
     def train_gen(self, train_file, val_file):
+        """
+        Trains a Naive Bayes model for sentiment classification.
+
+        Args:
+            train_file: Path to the training data CSV file.
+            val_file: Path to the validation data CSV file.
+
+        This function performs the following steps:
+            1. Loads and preprocesses training and validation data using `get_train_data`.
+            2. Converts text data to feature vectors using CountVectorizer.
+            3. Splits the training data into training and testing sets.
+            4. Trains a Multinomial Naive Bayes model.
+            5. Evaluates the model's performance on the testing set using classification report.
+            6. Prints the evaluation results.
+
+        """
         print("*************************************")
         print("----GENERATIVE MODEL: NAIVE BAYES----")
         print("*************************************")
 
         train_df, val_df = self.get_train_data(train_file, val_file)
-        #return
 
         # Convert text to feature vectors
-        # Note no pre-processing is done here. In practice you will have different preprocessing steps.
-        vectorizer = CountVectorizer()
+        vectorizer = CountVectorizer(max_features=6000, ngram_range=(1, 2))
         X = vectorizer.fit_transform(train_df['text'])
 
         # Split into train and test sets
@@ -95,32 +198,123 @@ class SentimentAnalyzer:
         y_pred = model.predict(X_test)
         self.evaluation_results(y_test, y_pred)
 
+    def dis_find_optimal_ngrams(self, X_train, y_train, cv=5):
+        """
+        Find optimal n-gram range using cross-validation
+        """
+        # Convert string labels to numerical values
+        y_train_encoded = self.label_encoder.fit_transform(y_train)
+
+        # Define the pipeline
+        pipeline = Pipeline([
+            ('tfidf', TfidfVectorizer(stop_words='english')),
+            ('svm', SVC(kernel='linear'))
+        ])
+
+        # Define parameter grid
+        param_grid = {
+            'tfidf__ngram_range': [(1, 1), (1, 2), (1, 3)],
+            'tfidf__max_features': [2000, 3000, 6000],
+        }
+
+        # Perform grid search
+        grid_search = GridSearchCV(
+            pipeline,
+            param_grid,
+            cv=cv,
+            n_jobs=-1,
+            scoring='f1_macro',  # Using f1_macro for multi-class
+            verbose=1
+        )
+
+        grid_search.fit(X_train, y_train_encoded)
+
+        print(f"Best parameters: {grid_search.best_params_}")
+        print(f"Best cross-validation score: {grid_search.best_score_:.3f}")
+
+        return grid_search.best_params_
+
     def train_dis(self, train_file, val_file):
+        """
+        Trains a Support Vector Machine (SVM) model for sentiment classification.
+
+        Args:
+            train_file: Path to the training data CSV file.
+            val_file: Path to the validation data CSV file.
+
+        This function performs the following steps:
+            1. Loads and preprocesses training and validation data using `get_train_data`.
+            2. Splits the training data into training and testing sets.
+            3. Extracts features using TF-IDF vectorizer.
+            4. Trains a linear SVM model.
+            5. Evaluates the model's performance on the testing set using classification report.
+            6. Prints the evaluation results.
+
+        """
+        return
         print("*********************************")
         print("----DISCRIMINATIVE MODEL: SVM----")
         print("*********************************")
         train_df, val_df = self.get_train_data(train_file, val_file)
 
         # Split into train and test sets
-        X_train, X_test, y_train, y_test = train_test_split(train_df['text'], train_df['sentiment'], test_size=0.2,
-                                                            random_state=self.registration_number)
+        X_train, X_test, y_train, y_test = train_test_split(
+            train_df['text'],
+            train_df['sentiment'],
+            test_size=0.2,
+            random_state=self.registration_number
+        )
 
-        # Step 2: Feature Extraction using TF-IDF
-        vectorizer = TfidfVectorizer(stop_words='english',
-                                     max_features=1000)  # Using TF-IDF to convert text to features
+        # Find optimal parameters
+        print("Finding optimal n-gram range...")
+        best_params = self.dis_find_optimal_ngrams(X_train, y_train)
+
+        # Extract best parameters
+        ngram_range = best_params['tfidf__ngram_range']
+        max_features = best_params['tfidf__max_features']
+
+        print(f"Training final model with ngram_range={ngram_range}, max_features={max_features}")
+
+        # Initialize vectorizer with optimal parameters
+        vectorizer = TfidfVectorizer(
+            stop_words='english',
+            max_features=max_features,
+            ngram_range=ngram_range
+        )
+
+        # Transform the text data
         X_train_tfidf = vectorizer.fit_transform(X_train)
         X_test_tfidf = vectorizer.transform(X_test)
 
-        # Step 3: Train the SVM model
-        svm_model = SVC(kernel='linear')  # Using a linear kernel for text classification
-        svm_model.fit(X_train_tfidf, y_train)
+        # Encode labels
+        y_train_encoded = self.label_encoder.fit_transform(y_train)
 
-        # Step 4: Evaluate the model
-        y_pred = svm_model.predict(X_test_tfidf)
+        # Train the SVM model
+        svm_model = SVC(kernel='linear')
+        svm_model.fit(X_train_tfidf, y_train_encoded)
+
+        # Evaluate the model
+        y_pred_encoded = svm_model.predict(X_test_tfidf)
+        # Convert predictions back to original labels for evaluation
+        y_pred = self.label_encoder.inverse_transform(y_pred_encoded)
         self.evaluation_results(y_test, y_pred)
 
+        return vectorizer, svm_model
 
     def evaluation_results(self, y_test, y_pred):
+        """
+        Prints the evaluation metrics for the model's predictions.
+
+        Args:
+            y_test: True labels of the test data.
+            y_pred: Predicted labels by the model.
+
+        This function calculates and prints:
+            - Accuracy score
+            - Macro F1 score
+            - Classification report (including precision, recall, F1-score, and support for each class)
+
+        """
         # Print the accuracy and detailed classification report
         print(f"Accuracy: {accuracy_score(y_test, y_pred):.2f}")
         print(f"Macro F1 Score: {f1_score(y_test, y_pred, average='macro'):.2f}")
