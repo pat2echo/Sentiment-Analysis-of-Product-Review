@@ -167,18 +167,29 @@ class SentimentAnalyzer:
         # Convert string labels to numerical values
         y_train_encoded = self.label_encoder.fit_transform(y_train)
 
+        # Calculate class prior probabilities from the training labels
+        class_counts = np.bincount(y_train_encoded)
+        class_priors = class_counts / len(y_train_encoded)  # Normalize to get probabilities
+        print(f"Class Priors: {class_priors}")
+
         # Define the pipeline
         pipeline = Pipeline([
             ('vectorizer', CountVectorizer()),
-            ('nb', MultinomialNB())
+            ('nb', MultinomialNB(class_prior=class_priors))
         ])
 
         # Define parameter grid
         param_grid = {
-            'vectorizer__max_features': [1000, 2000, 3000],
+            'vectorizer__max_features': [1000, 2000, 3000, 6000],
             'vectorizer__ngram_range': [(1, 2), (1, 3)],
-            'vectorizer__min_df': [2, 3],  # Minimum document frequency
+            'vectorizer__min_df': [2, 3, 4],  # Minimum document frequency
             'nb__fit_prior': [True, False]  # Whether to learn class prior probabilities
+        }
+        param_grid = {
+            'vectorizer__max_features': [3000],
+            'vectorizer__ngram_range': [(1, 2)],
+            'vectorizer__min_df': [4],  # Minimum document frequency
+            'nb__fit_prior': [True]  # Whether to learn class prior probabilities
         }
 
         # Perform grid search
@@ -274,7 +285,7 @@ class SentimentAnalyzer:
         self.evaluation_results(y_test, y_pred)
 
         # Optionally analyze feature importance
-        self.analyze_features(vectorizer, model)
+        #self.analyze_features(vectorizer, model)
 
         return vectorizer, model
 
@@ -306,8 +317,25 @@ class SentimentAnalyzer:
 
         # Define parameter grid
         param_grid = {
-            'tfidf__ngram_range': [(1, 1), (1, 2), (1, 3)],
-            'tfidf__max_features': [2000, 3000, 6000],
+            'tfidf__ngram_range': [(1, 2), (1, 3)],  # bigrams, trigrams
+            'tfidf__max_features': [3000, 6000],  # Vocabulary size
+            'tfidf__max_df': [0.7, 1.0],  # Maximum document frequency (proportion of documents)
+
+            # SVM Parameters
+            'svm__C': [0.1, 1, 10],  # Regularization parameter
+            'svm__kernel': ['linear', 'rbf'],  # Kernel type
+            #'svm__gamma': ['scale', 'auto'],  # Kernel coefficient (used for 'rbf')
+            'svm__class_weight': [None, 'balanced'],  # Handle imbalanced classes
+        }
+        param_grid = {
+            'tfidf__ngram_range': [(1, 3)],  # bigrams, trigrams
+            'tfidf__max_features': [6000],  # Vocabulary size
+            'tfidf__max_df': [0.7],  # Maximum document frequency (proportion of documents)
+
+            # SVM Parameters
+            'svm__C': [1],  # Regularization parameter
+            'svm__kernel': ['linear'],  # Kernel type
+            'svm__class_weight': ['balanced'],  # Handle imbalanced classes
         }
 
         # Perform grid search
@@ -344,7 +372,6 @@ class SentimentAnalyzer:
             6. Prints the evaluation results.
 
         """
-        return
         print("*********************************")
         print("----DISCRIMINATIVE MODEL: SVM----")
         print("*********************************")
@@ -418,4 +445,4 @@ gen = SentimentAnalyzer()
 gen.train_gen(train_file='./data/train.csv', val_file='./data/valid.csv')
 
 dis = SentimentAnalyzer()
-dis.train_dis(train_file='./data/train.csv', val_file='./data/valid.csv')
+#dis.train_dis(train_file='./data/train.csv', val_file='./data/valid.csv')
