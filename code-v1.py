@@ -31,18 +31,23 @@ from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, recall_s
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelEncoder
 
-STUDENT_ID = 2320824
-ASSIGNMENT_BASE_PATH = '/content/gdrive/MyDrive/CE807-24-SU/Reassessment'
-ASSIGNMENT_BASE_PATH = '.'
-model_gen = f'{ASSIGNMENT_BASE_PATH}/model/{STUDENT_ID}/Model_gen/'
-model_dis = f'{ASSIGNMENT_BASE_PATH}/model/{STUDENT_ID}/Model_dis/'
-output_dir = f'{ASSIGNMENT_BASE_PATH}/output/'
-data_dir = f'{ASSIGNMENT_BASE_PATH}/data/'
-
 class SentimentAnalyzer:
-    def __init__(self, student_id=1):
-        self.label_encoder = LabelEncoder()
+    def __init__(self, student_id, base_path, ):
         self.registration_number = student_id
+        self.label_encoder = LabelEncoder()
+
+        # Setup Directories
+        self.model_gen = f'{base_path}/model/{self.registration_number}/Model_gen/'
+        self.model_dis = f'{base_path}/model/{self.registration_number}/Model_dis/'
+        self.output_dir = f'{base_path}/output/'
+        self.data_dir = f'{base_path}/data/'
+
+        if not os.path.exists(self.model_gen):
+            os.makedirs(self.model_gen)
+        if not os.path.exists(self.model_dis):
+            os.makedirs(self.model_dis)
+        if not os.path.exists(self.output_dir):
+            os.makedirs(self.output_dir)
 
         # Custom Created Dataset for first-level-validation
         self.reviews = [
@@ -189,31 +194,6 @@ class SentimentAnalyzer:
 
         return train_df, val_df
 
-    def get_test_data(self, test_file):
-        """
-        Loads and preprocesses testing data.
-
-        Args:
-            test_file: Path to the training data CSV file.
-
-        Returns:
-            A tuple containing:
-                - test_file: Preprocessed training DataFrame.
-
-        This function performs the following steps:
-            1. Loads test data from CSV files.
-            2. Drops rows with missing values (NaN).
-            3. Applies text cleaning to the test data.
-            4. Prints the number of records in each dataset.
-
-        """
-        test_df = pd.read_csv(test_file)
-        test_df = test_df.dropna().apply(self.preprocess, axis=1)
-        print(test_df.head())
-        print(f'Testing data: {len(test_df)} records')
-
-        return test_df
-
     def gen_find_optimal_params(self, X_train, y_train, cv=5):
         """
         Find optimal parameters for both CountVectorizer and MultinomialNB
@@ -275,19 +255,78 @@ class SentimentAnalyzer:
 
         return grid_search.best_params_
 
-    def save_model(self, model_dir, model_name, model, vectorizer, label_encoder=None):
+    def train_gen(self, train_file, val_file):
         """
-        Saves a trained model and its associated vectorizer.
+        Trains a Naive Bayes model for sentiment classification.
 
         Args:
-            model_dir: Directory where the model and vocabulary files are saved.
-            model_name: Name of the model.
-            model: trained model
-            vectorizer: trained vectorizer
-            label_encoder: trained label_encoder
-        Returns:
-            None
+            train_file: Path to the training data CSV file.
+            val_file: Path to the validation data CSV file.
+
+        This function performs the following steps:
+            1. Loads and preprocesses training and validation data using `get_train_data`.
+            2. Converts text data to feature vectors using CountVectorizer.
+            3. Splits the training data into training and testing sets.
+            4. Trains a Multinomial Naive Bayes model.
+            5. Evaluates the model's performance on the testing set using classification report.
+            6. Prints the evaluation results.
+
         """
+        print("*************************************")
+        print("----GENERATIVE MODEL: NAIVE BAYES----")
+        print("*************************************")
+
+        # Get train and validation data
+        train_df, val_df = self.get_train_data(train_file, val_file)
+        #train_df = self.balance_dataset(train_df_unbal)
+
+        # Split into train and test sets
+        X_train = train_df['text']
+        X_test = val_df['text']
+        y_train = train_df['sentiment']
+        y_test = val_df['sentiment']
+
+        # Find optimal parameters
+        best_params = self.gen_find_optimal_params(X_train, y_train)
+
+        # Extract best parameters
+        vectorizer_params = {k.replace('vectorizer__', ''): v
+                             for k, v in best_params.items()
+                             if k.startswith('vectorizer__')}
+        nb_params = {k.replace('nb__', ''): v
+                     for k, v in best_params.items()
+                     if k.startswith('nb__')}
+
+        print("\nTraining final model with:")
+        print(f"Vectorizer parameters: {vectorizer_params}")
+        print(f"Naive Bayes parameters: {nb_params}")
+
+        # Initialize vectorizer with optimal parameters
+        vectorizer = CountVectorizer(**vectorizer_params)
+        X_train_vec = vectorizer.fit_transform(X_train)
+        X_test_vec = vectorizer.transform(X_test)
+
+        # Encode labels
+        y_train_encoded = self.label_encoder.fit_transform(y_train)
+
+        # Train the model with optimal parameters
+        model = MultinomialNB(**nb_params)
+        model.fit(X_train_vec, y_train_encoded)
+
+        # save model
+        self.save_model(model_dir=self.model_gen, model_name='naive_bayes', model=model, vectorizer=vectorizer)
+
+        # Evaluate the model
+        y_pred_encoded = model.predict(X_test_vec)
+        y_pred = self.label_encoder.inverse_transform(y_pred_encoded)
+        self.evaluation_results(y_test, y_pred)
+
+        # Optionally analyze feature importance
+        #self.analyze_features(vectorizer, model)
+
+        return vectorizer, model
+
+    def save_model(self, model_dir, model_name, model, vectorizer):
         model_file = os.path.join(model_dir, f'{model_name}_model.sav')
         pickle.dump(model, open(model_file, 'wb'))
         print('Saved model to', model_file)
@@ -296,43 +335,18 @@ class SentimentAnalyzer:
         pickle.dump(vectorizer, open(vocab_file, 'wb'))
         print('Saved vocab to', vocab_file)
 
-        label_encoder_file = os.path.join(model_dir, f'{model_name}_label_encoder.sav')
-        pickle.dump(label_encoder, open(label_encoder_file, 'wb'))
-        print('Saved label_encoder to', label_encoder_file)
-
-    def load_model(self, model_dir, model_name):
+    def analyze_features(self, vectorizer, model):
         """
-        Loads a saved model and its associated vectorizer.
-
-        Args:
-            model_dir: Directory where the model and vocabulary files are saved.
-            model_name: Name of the model.
-
-        Returns:
-            A tuple containing the loaded model and vectorizer.
+        Analyze and print most informative features for each class
         """
-        model_file = os.path.join(model_dir, f'{model_name}_model.sav')
-        vocab_file = os.path.join(model_dir, f'{model_name}_vocab.sav')
-        label_encoder_file = os.path.join(model_dir, f'{model_name}_label_encoder.sav')
+        feature_names = vectorizer.get_feature_names_out()
 
-        try:
-            with open(model_file, 'rb') as f:
-                model = pickle.load(f)
-            print(f'Loaded model from {model_file}')
-
-            with open(vocab_file, 'rb') as f:
-                vectorizer = pickle.load(f)
-            print(f'Loaded vocabulary from {vocab_file}')
-
-            with open(label_encoder_file, 'rb') as f:
-                label_encoder = pickle.load(f)
-            print(f'Loaded label_encoder from {label_encoder_file}')
-
-            return model, vectorizer, label_encoder
-
-        except FileNotFoundError:
-            print(f"Error: Model files not found in {model_dir}.")
-            return None, None, None
+        print("\nMost informative features:")
+        for i, category in enumerate(self.label_encoder.classes_):
+            top_features = sorted(zip(model.feature_log_prob_[i], feature_names), reverse=True)[:10]
+            print(f"\nTop 10 features for {category}:")
+            for score, feature in top_features:
+                print(f"{feature}: {score:.3f}")
 
     def dis_find_optimal_params(self, X_train, y_train, cv=5):
         """
@@ -400,6 +414,75 @@ class SentimentAnalyzer:
 
         return grid_search.best_params_
 
+    def train_dis(self, train_file, val_file):
+        """
+        Trains a Support Vector Machine (SVM) model for sentiment classification.
+
+        Args:
+            train_file: Path to the training data CSV file.
+            val_file: Path to the validation data CSV file.
+
+        This function performs the following steps:
+            1. Loads and preprocesses training and validation data using `get_train_data`.
+            2. Splits the training data into training and testing sets.
+            3. Extracts features using TF-IDF vectorizer.
+            4. Trains a linear SVM model.
+            5. Evaluates the model's performance on the testing set using classification report.
+            6. Prints the evaluation results.
+
+        """
+        print("*********************************")
+        print("----DISCRIMINATIVE MODEL: SVM----")
+        print("*********************************")
+        train_df_unbal, val_df = self.get_train_data(train_file, val_file)
+        train_df = self.balance_dataset(train_df_unbal)
+
+        # Split into train and test sets
+        X_train = train_df['text']
+        X_test = val_df['text']
+        y_train = train_df['sentiment']
+        y_test = val_df['sentiment']
+
+        # Find optimal parameters
+        best_params = self.dis_find_optimal_params(X_train, y_train)
+
+        # Extract best parameters
+        ngram_range = best_params['tfidf__ngram_range']
+        max_features = best_params['tfidf__max_features']
+
+        print(f"Training final model with ngram_range={ngram_range}, max_features={max_features}")
+
+        # Initialize vectorizer with optimal parameters
+        vectorizer = TfidfVectorizer(
+            stop_words='english',
+            max_features=max_features,
+            ngram_range=ngram_range
+        )
+
+        # Transform the text data
+        X_train_tfidf = vectorizer.fit_transform(X_train)
+        X_test_tfidf = vectorizer.transform(X_test)
+
+
+        # Encode labels
+        y_train_encoded = self.label_encoder.fit_transform(y_train)
+
+        # Train the SVM model
+        svm_model = SVC(kernel='linear')
+        svm_model.fit(X_train_tfidf, y_train_encoded)
+
+        # save the model
+        self.save_model(model_dir=self.model_dis, model_name='svm', model=svm_model, vectorizer=vectorizer)
+
+        # Evaluate the model
+        y_pred_encoded = svm_model.predict(X_test_tfidf)
+
+        # Convert predictions back to original labels for evaluation
+        y_pred = self.label_encoder.inverse_transform(y_pred_encoded)
+        self.evaluation_results(y_test, y_pred)
+
+        return vectorizer, svm_model
+
     def evaluation_results(self, y_test, y_pred):
         """
         Prints the evaluation metrics for the model's predictions.
@@ -414,6 +497,7 @@ class SentimentAnalyzer:
             - Classification report (including precision, recall, F1-score, and support for each class)
 
         """
+
         # Print the accuracy and detailed classification report
         positive_benchmark = ["positive"] * len(y_pred)
         negative_benchmark = ["negative"] * len(y_pred)
@@ -446,206 +530,9 @@ class SentimentAnalyzer:
         print("*******************")
         print(metrics_df)
 
-def train_Gen(train_file, val_file, model_dir, student_id=2320824):
-    """
-    Trains a Naive Bayes model for sentiment classification.
 
-    Args:
-        train_file: Path to the training data CSV file.
-        val_file: Path to the validation data CSV file.
+gen = SentimentAnalyzer(student_id=2320824, base_path='./')
+gen.train_gen(train_file=f'{gen.data_dir}/train.csv', val_file=f'{gen.data_dir}/valid.csv')
 
-    This function performs the following steps:
-        1. Loads and preprocesses training and validation data using `get_train_data`.
-        2. Converts text data to feature vectors using CountVectorizer.
-        3. Splits the training data into training and testing sets.
-        4. Trains a Multinomial Naive Bayes model.
-        5. Evaluates the model's performance on the testing set using classification report.
-        6. Prints the evaluation results.
-
-    """
-    if not os.path.exists(model_dir):
-        os.makedirs(model_dir)
-
-    print("*************************************")
-    print("----GENERATIVE MODEL: NAIVE BAYES----")
-    print("*************************************")
-    gen = SentimentAnalyzer(student_id=student_id)
-
-    # Get train and validation data
-    train_df, val_df = gen.get_train_data(train_file, val_file)
-    #train_df = gen.balance_dataset(train_df_unbal)
-
-    # Split into train and test sets
-    X_train = train_df['text']
-    X_test = val_df['text']
-    y_train = train_df['sentiment']
-    y_test = val_df['sentiment']
-
-    # Find optimal parameters
-    best_params = gen.gen_find_optimal_params(X_train, y_train)
-
-    # Extract best parameters
-    vectorizer_params = {k.replace('vectorizer__', ''): v
-                         for k, v in best_params.items()
-                         if k.startswith('vectorizer__')}
-    nb_params = {k.replace('nb__', ''): v
-                 for k, v in best_params.items()
-                 if k.startswith('nb__')}
-
-    print("\nTraining final model with:")
-    print(f"Vectorizer parameters: {vectorizer_params}")
-    print(f"Naive Bayes parameters: {nb_params}")
-
-    # Initialize vectorizer with optimal parameters
-    vectorizer = CountVectorizer(**vectorizer_params)
-    X_train_vec = vectorizer.fit_transform(X_train)
-    X_test_vec = vectorizer.transform(X_test)
-
-    # Encode labels
-    y_train_encoded = gen.label_encoder.fit_transform(y_train)
-
-    # Train the model with optimal parameters
-    model = MultinomialNB(**nb_params)
-    model.fit(X_train_vec, y_train_encoded)
-
-    # save model
-    gen.save_model(model_dir=model_dir, model_name='naive_bayes', model=model, vectorizer=vectorizer, label_encoder=gen.label_encoder)
-
-    # Evaluate the model
-    y_pred_encoded = model.predict(X_test_vec)
-    y_pred = gen.label_encoder.inverse_transform(y_pred_encoded)
-    gen.evaluation_results(y_test, y_pred)
-
-    return vectorizer, model
-
-#train_Gen(f'{data_dir}train.csv', f'{data_dir}valid.csv', model_gen, student_id=STUDENT_ID)
-
-def test_Gen(test_file, model_dir, student_id=2320824):
-
-    if not os.path.exists(model_dir):
-        print(f"Error: Model dir {model_dir} not found.")
-
-    print("------------------------------------------")
-    print("----TEST GENERATIVE MODEL: NAIVE BAYES----")
-    print("------------------------------------------")
-    gen = SentimentAnalyzer(student_id=student_id)
-
-    # Get test data and apply preprocessing rules
-    test_df = gen.get_test_data(test_file)
-
-    # load model
-    model, vectorizer, label_encoder = gen.load_model(model_dir=model_dir, model_name='naive_bayes')
-
-    # Initialize vectorizer
-    X_test_vec = vectorizer.transform(test_df['text'])
-
-    # Evaluate the model
-    y_pred_encoded = model.predict(X_test_vec)
-    y_pred = label_encoder.inverse_transform(y_pred_encoded)
-    gen.evaluation_results(test_df['sentiment'], y_pred)
-
-    return vectorizer, model
-
-test_Gen(f'{data_dir}valid.csv', model_gen, student_id=STUDENT_ID)
-
-def train_Dis(train_file, val_file, model_dir, student_id=2320824):
-    """
-    Trains a Support Vector Machine (SVM) model for sentiment classification.
-
-    Args:
-        train_file: Path to the training data CSV file.
-        val_file: Path to the validation data CSV file.
-
-    This function performs the following steps:
-        1. Loads and preprocesses training and validation data using `get_train_data`.
-        2. Splits the training data into training and testing sets.
-        3. Extracts features using TF-IDF vectorizer.
-        4. Trains a linear SVM model.
-        5. Evaluates the model's performance on the testing set using classification report.
-        6. Prints the evaluation results.
-
-    """
-    if not os.path.exists(model_dir):
-        os.makedirs(model_dir)
-
-    print("*********************************")
-    print("----DISCRIMINATIVE MODEL: SVM----")
-    print("*********************************")
-    dis = SentimentAnalyzer(student_id=student_id)
-    train_df_unbal, val_df = dis.get_train_data(train_file, val_file)
-    train_df = dis.balance_dataset(train_df_unbal)
-
-    # Split into train and test sets
-    X_train = train_df['text']
-    X_test = val_df['text']
-    y_train = train_df['sentiment']
-    y_test = val_df['sentiment']
-
-    # Find optimal parameters
-    best_params = dis.dis_find_optimal_params(X_train, y_train)
-
-    # Extract best parameters
-    ngram_range = best_params['tfidf__ngram_range']
-    max_features = best_params['tfidf__max_features']
-
-    print(f"Training final model with ngram_range={ngram_range}, max_features={max_features}")
-
-    # Initialize vectorizer with optimal parameters
-    vectorizer = TfidfVectorizer(
-        stop_words='english',
-        max_features=max_features,
-        ngram_range=ngram_range
-    )
-
-    # Transform the text data
-    X_train_tfidf = vectorizer.fit_transform(X_train)
-    X_test_tfidf = vectorizer.transform(X_test)
-
-    # Encode labels
-    y_train_encoded = dis.label_encoder.fit_transform(y_train)
-
-    # Train the SVM model
-    svm_model = SVC(kernel='linear')
-    svm_model.fit(X_train_tfidf, y_train_encoded)
-
-    # save the model
-    dis.save_model(model_dir=model_dir, model_name='svm', model=svm_model, vectorizer=vectorizer, label_encoder=dis.label_encoder)
-
-    # Evaluate the model
-    y_pred_encoded = svm_model.predict(X_test_tfidf)
-
-    # Convert predictions back to original labels for evaluation
-    y_pred = dis.label_encoder.inverse_transform(y_pred_encoded)
-    dis.evaluation_results(y_test, y_pred)
-
-    return vectorizer, svm_model
-
-#train_Dis(f'{data_dir}train.csv', f'{data_dir}valid.csv', model_dis, student_id=STUDENT_ID)
-
-def test_Dis(test_file, model_dir, student_id=2320824):
-
-    if not os.path.exists(model_dir):
-        print(f"Error: Model dir {model_dir} not found.")
-
-    print("--------------------------------------")
-    print("----TEST DISCRIMINATIVE MODEL: SVM----")
-    print("--------------------------------------")
-    dis = SentimentAnalyzer(student_id=student_id)
-
-    # Get test data and apply preprocessing rules
-    test_df = dis.get_test_data(test_file)
-
-    # load model
-    model, vectorizer, label_encoder = dis.load_model(model_dir=model_dir, model_name='svm')
-
-    # Initialize vectorizer
-    X_test_vec = vectorizer.transform(test_df['text'])
-
-    # Evaluate the model
-    y_pred_encoded = model.predict(X_test_vec)
-    y_pred = label_encoder.inverse_transform(y_pred_encoded)
-    dis.evaluation_results(test_df['sentiment'], y_pred)
-
-    return vectorizer, model
-
-test_Dis(f'{data_dir}valid.csv', model_dis, student_id=STUDENT_ID)
+dis = SentimentAnalyzer(student_id=2320824, base_path='./')
+dis.train_dis(train_file=f'{dis.data_dir}/train.csv', val_file=f'{dis.data_dir}/valid.csv')
