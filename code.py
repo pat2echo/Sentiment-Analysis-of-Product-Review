@@ -114,6 +114,7 @@ class SentimentAnalyzer:
 
         # Clean text
         cleaned_text = self.clean_text(text)
+        #cleaned_text = text
 
         # Tokenize
         tokens = word_tokenize(cleaned_text)
@@ -261,16 +262,14 @@ class SentimentAnalyzer:
         print("*************************************")
 
         # Get train and validation data
-        train_df_unbal, val_df = self.get_train_data(train_file, val_file)
-        train_df = self.balance_dataset(train_df_unbal)
+        train_df, val_df = self.get_train_data(train_file, val_file)
+        #train_df = self.balance_dataset(train_df_unbal)
 
         # Split into train and test sets
-        X_train, X_test, y_train, y_test = train_test_split(
-            train_df['text'],
-            train_df['sentiment'],
-            test_size=0.2,
-            random_state=self.registration_number
-        )
+        X_train = train_df['text']
+        X_test = val_df['text']
+        y_train = train_df['sentiment']
+        y_test = val_df['sentiment']
 
         # Find optimal parameters
         print("Finding optimal parameters...")
@@ -400,12 +399,10 @@ class SentimentAnalyzer:
         train_df = self.balance_dataset(train_df_unbal)
 
         # Split into train and test sets
-        X_train, X_test, y_train, y_test = train_test_split(
-            train_df['text'],
-            train_df['sentiment'],
-            test_size=0.2,
-            random_state=self.registration_number
-        )
+        X_train = train_df['text']
+        X_test = val_df['text']
+        y_train = train_df['sentiment']
+        y_test = val_df['sentiment']
 
         # Find optimal parameters
         print("Finding optimal n-gram range...")
@@ -428,6 +425,7 @@ class SentimentAnalyzer:
         X_train_tfidf = vectorizer.fit_transform(X_train)
         X_test_tfidf = vectorizer.transform(X_test)
 
+
         # Encode labels
         y_train_encoded = self.label_encoder.fit_transform(y_train)
 
@@ -437,6 +435,7 @@ class SentimentAnalyzer:
 
         # Evaluate the model
         y_pred_encoded = svm_model.predict(X_test_tfidf)
+
         # Convert predictions back to original labels for evaluation
         y_pred = self.label_encoder.inverse_transform(y_pred_encoded)
         self.evaluation_results(y_test, y_pred)
@@ -458,10 +457,11 @@ class SentimentAnalyzer:
 
         """
         # Print the accuracy and detailed classification report
-        print(f"Accuracy: {accuracy_score(y_test, y_pred):.2f}")
-        print(f"Macro F1 Score: {f1_score(y_test, y_pred, average='macro'):.2f}")
-        print("Classification Report:")
-        print(classification_report(y_test, y_pred, zero_division=0, output_dict=False))
+        print(f"Accuracy: {accuracy_score(y_test, y_pred):.2f}", f"+ve Benchmark Accuracy: {accuracy_score(y_test, ['positive'] * len(y_pred) ):.2f}", f"-ve Benchmark Accuracy: {accuracy_score(y_test, ['negative'] * len(y_pred) ):.2f}")
+        print(f"Macro F1 Score: {f1_score(y_test, y_pred, average='macro'):.2f}", f"+ve Benchmark F1 Score: {f1_score(y_test, ['positive'] * len(y_pred), average='macro' ):.2f}", f"-ve Benchmark F1 Score: {f1_score(y_test, ['negative'] * len(y_pred), average='macro' ):.2f}")
+        #print(f"Macro F1 Score: {f1_score(y_test, y_pred, average='macro'):.2f}")
+        #print("Classification Report:")
+        #print(classification_report(y_test, y_pred, zero_division=0, output_dict=False))
 
 gen = SentimentAnalyzer()
 gen.train_gen(train_file='./data/train.csv', val_file='./data/valid.csv')
