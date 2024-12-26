@@ -2,13 +2,16 @@ import os
 import subprocess
 import sys
 subprocess.check_call([sys.executable, "-m", "pip", "install", "nltk"])
-subprocess.check_call([sys.executable, "-m", "pip", "install", "imblearn"])git
+subprocess.check_call([sys.executable, "-m", "pip", "install", "imblearn"])
+subprocess.check_call([sys.executable, "-m", "pip", "install", "emoji"])
 
 import numpy as np
 import pandas as pd
 import re
 from imblearn.over_sampling import SMOTE
 import pickle
+import emoji
+from collections import Counter
 
 import nltk
 nltk.download('stopwords')
@@ -58,7 +61,7 @@ class SentimentAnalyzer:
         lemmatizer (WordNetLemmatizer): Tool for word lemmatization
         stop_words (set): Collection of stop words to be removed during preprocessing
     """
-    def __init__(self, student_id=1):
+    def __init__(self, student_id=1, analysis=None):
         """
         Initialize the SentimentAnalyzer with custom datasets and preprocessing tools.
 
@@ -67,6 +70,11 @@ class SentimentAnalyzer:
         """
         self.label_encoder = LabelEncoder()
         self.registration_number = student_id
+        self.analysis = analysis
+        self.support_emoji = True
+
+        if self.analysis == 'without_emoji':
+            self.support_emoji = False
 
         # Custom Created Dataset for first-level-validation
         self.reviews = [
@@ -83,6 +91,62 @@ class SentimentAnalyzer:
 
         # Add domain-specific stopwords
         self.stop_words.update(['product', 'item', 'buy', 'purchased'])
+
+        # Add emoji mapping for sentiment
+        self.emoji_sentiment = {
+            '😊': 'positive', '😃': 'positive', '😄': 'positive', '👍': 'positive',
+            '❤️': 'positive', '😍': 'positive', '🎉': 'positive', '✨': 'positive',
+            '😢': 'negative', '😞': 'negative', '😠': 'negative', '👎': 'negative',
+            '😡': 'negative', '💔': 'negative', '😒': 'negative', '😩': 'negative'
+        }
+
+    def extract_emojis(self, text):
+        """
+        Extracts emojis from text and returns them as a list.
+
+        Args:
+            text (str): Input text containing emojis
+
+        Returns:
+            list: List of emojis found in the text
+        """
+        return [c for c in text if c in emoji.EMOJI_DATA]
+
+    def get_emoji_sentiment_score(self, emojis):
+        """
+        Calculates sentiment score based on emojis.
+
+        Args:
+            emojis (list): List of emojis from text
+
+        Returns:
+            float: Sentiment score between -1 and 1
+        """
+        score = 0
+        for e in emojis:
+            if e in self.emoji_sentiment:
+                score += 1 if self.emoji_sentiment[e] == 'positive' else -1
+        return score / len(emojis) if emojis else 0
+
+    def extract_text_features(self, text):
+        """
+        Extracts emoji-related features.
+
+        Args:
+            text (str): Input text
+
+        Returns:
+            dict: Dictionary containing text features
+        """
+        emojis = self.extract_emojis(text)
+        emoji_count = len(emojis)
+        emoji_sentiment = self.get_emoji_sentiment_score(emojis)
+
+        return {
+            'emoji_count': emoji_count,
+            'emoji_sentiment': emoji_sentiment,
+            'emojis': Counter(emojis)
+        }
 
     def count_text_features(self, series):
         """
@@ -119,6 +183,16 @@ class SentimentAnalyzer:
         print("Text Features Count: ", dict)
         print("+++++++++++++++++++")
 
+    def preprocess_text_with_emojis(self, text):
+        """
+        Preprocess the text to handle emojis by converting them into descriptive text.
+        """
+        # Convert emojis to text descriptions
+        text = emoji.demojize(text, delimiters=(" ", " "))  # 😊 -> smiling_face
+        # Optionally, remove unnecessary underscores in emoji descriptions
+        text = re.sub(r'_', ' ', text)
+        return text
+
     def clean_text(self, original_text):
         """
         Cleans the text in the given row for further processing.
@@ -148,14 +222,21 @@ class SentimentAnalyzer:
             # Strip HTML tags
             text = re.sub(r'<.*?>', ' ', text)
 
-            # Remove non-alphabetic characters
-            text = re.sub(r'[^a-zA-Z\s]', ' ', text)
+            if self.support_emoji:
+                # Remove non-alphabetic characters except emojis
+                text = ''.join(c for c in text if c.isalpha() or c.isspace() or c in emoji.EMOJI_DATA)
+            else:
+                # Remove non-alphabetic characters
+                text = re.sub(r'[^a-zA-Z\s]', ' ', text)
 
             # Remove double spaces
             text = re.sub(r'  ', ' ', text)
 
             # Convert to lower case
             text = text.lower()
+
+            # Remove leading and trailing spaces
+            text = text.strip()
 
         return text
 
@@ -210,6 +291,16 @@ class SentimentAnalyzer:
             pd.Series: Processed row with cleaned and tokenized text
         """
         text = row['text']
+
+        if self.support_emoji:
+            # Extract features before cleaning
+            features = self.extract_text_features(text)
+
+            # Add emoji features to row
+            row['emoji_count'] = features['emoji_count']
+            row['emoji_sentiment'] = features['emoji_sentiment']
+
+            text = self.preprocess_text_with_emojis(text)
 
         # Clean text
         cleaned_text = self.clean_text(text)
@@ -277,7 +368,8 @@ class SentimentAnalyzer:
 
         """
         train_df = pd.read_csv(train_file)
-        self.count_text_features(train_df['text'])
+        if self.analysis is None:
+            self.count_text_features(train_df['text'])
 
         val_df = pd.read_csv(val_file)
 
@@ -285,9 +377,11 @@ class SentimentAnalyzer:
         #print(train_df[train_df.isna().any(axis=1)])
         train_df = train_df.dropna().apply(self.preprocess, axis=1)
         val_df = val_df.dropna().apply(self.preprocess, axis=1)
-        print(train_df.head())
-        print(f'Training data: {len(train_df)} records')
-        print(f'Validation data: {len(val_df)} records')
+
+        if self.analysis is None:
+            print(train_df.head())
+            print(f'Training data: {len(train_df)} records')
+            print(f'Validation data: {len(val_df)} records')
 
         return train_df, val_df
 
@@ -310,12 +404,52 @@ class SentimentAnalyzer:
 
         """
         test_df = pd.read_csv(test_file)
+        if self.analysis is None:
+            self.count_text_features(test_df['text'])
+
         test_df_o = test_df.copy()
         test_df = test_df.apply(self.preprocess, axis=1)
         print(test_df.head())
         print(f'Testing data: {len(test_df)} records')
 
         return test_df, test_df_o
+
+    def create_feature_matrix(self, texts, vectorizer=None, training=False):
+        """
+        Creates a feature matrix combining text vectors and emoji features.
+
+        Args:
+            texts (list): List of text samples
+            vectorizer: Optional pre-fitted vectorizer
+            training (bool): Whether this is for training
+
+        Returns:
+            tuple: (combined_features, vectorizer)
+        """
+        # Extract emoji features
+        emoji_features = []
+        for text in texts:
+            features = self.extract_text_features(text)
+            emoji_features.append([
+                features['emoji_count'],
+                features['emoji_sentiment']
+            ])
+        emoji_features = np.array(emoji_features)
+
+        if vectorizer is None:
+            print("No Vectorizer defined")
+
+        # Create text features
+        if training:
+            text_features = vectorizer.fit_transform(texts)
+        else:
+            text_features = vectorizer.transform(texts)
+
+        # Combine features
+        text_features_dense = text_features.toarray()
+        combined_features = np.hstack((text_features_dense, emoji_features))
+
+        return combined_features, vectorizer
 
     def gen_find_optimal_params(self, X_train, y_train, cv=5):
         """
@@ -344,12 +478,21 @@ class SentimentAnalyzer:
         ])
 
         # Define parameter grid
-        param_grid = {
-            'vectorizer__max_features': [1000, 2000, 3000, 6000],
-            'vectorizer__ngram_range': [(1, 2), (1, 3)],
-            'vectorizer__min_df': [2, 3, 4],  # Minimum document frequency
-            'nb__fit_prior': [True, False]  # Whether to learn class prior probabilities
-        }
+        if self.analysis is None:
+            param_grid = {
+                'vectorizer__max_features': [1000, 2000, 3000, 6000],
+                'vectorizer__ngram_range': [(1, 2), (1, 3)],
+                'vectorizer__min_df': [2, 3, 4],  # Minimum document frequency
+                'nb__fit_prior': [True, False]  # Whether to learn class prior probabilities
+            }
+        else:
+            param_grid = {
+                'vectorizer__max_features': [3000],
+                'vectorizer__ngram_range': [(1, 2)],
+                'vectorizer__min_df': [4],  # Minimum document frequency
+                'nb__fit_prior': [True]  # Whether to learn class prior probabilities
+            }
+
         param_grid = {
             'vectorizer__max_features': [3000],
             'vectorizer__ngram_range': [(1, 2)],
@@ -367,22 +510,25 @@ class SentimentAnalyzer:
             verbose=1
         )
 
-        print("***********************")
-        print("******GRID SEARCH******")
-        print("***********************")
+        if self.analysis is None:
+            print("***********************")
+            print("******GRID SEARCH******")
+            print("***********************")
+
         grid_search.fit(X_train, y_train_encoded)
 
-        print(f"\nBest parameters: {grid_search.best_params_}")
-        print(f"Best cross-validation score: {grid_search.best_score_:.3f}")
+        if self.analysis is None:
+            print(f"\nBest parameters: {grid_search.best_params_}")
+            print(f"Best cross-validation score: {grid_search.best_score_:.3f}")
 
-        # Print top 3 parameter combinations
-        results_df = pd.DataFrame(grid_search.cv_results_)
-        top_3 = results_df.nlargest(3, 'mean_test_score')
-        print("\nTop 3 parameter combinations:")
-        for idx, row in top_3.iterrows():
-            print(f"\nRank {row['rank_test_score']}:")
-            print(f"Parameters: {row['params']}")
-            print(f"Mean CV Score: {row['mean_test_score']:.3f} (+/- {row['std_test_score'] * 2:.3f})")
+            # Print top 3 parameter combinations
+            results_df = pd.DataFrame(grid_search.cv_results_)
+            top_3 = results_df.nlargest(3, 'mean_test_score')
+            print("\nTop 3 parameter combinations:")
+            for idx, row in top_3.iterrows():
+                print(f"\nRank {row['rank_test_score']}:")
+                print(f"Parameters: {row['params']}")
+                print(f"Mean CV Score: {row['mean_test_score']:.3f} (+/- {row['std_test_score'] * 2:.3f})")
 
         return grid_search.best_params_
 
@@ -467,17 +613,30 @@ class SentimentAnalyzer:
         ])
 
         # Define parameter grid
-        param_grid = {
-            'tfidf__ngram_range': [(1, 2), (1, 3)],  # bigrams, trigrams
-            'tfidf__max_features': [3000, 6000],  # Vocabulary size
-            'tfidf__max_df': [0.7, 1.0],  # Maximum document frequency (proportion of documents)
+        if self.analysis is None:
+            param_grid = {
+                'tfidf__ngram_range': [(1, 2), (1, 3)],  # bigrams, trigrams
+                'tfidf__max_features': [3000, 6000],  # Vocabulary size
+                'tfidf__max_df': [0.7, 1.0],  # Maximum document frequency (proportion of documents)
 
-            # SVM Parameters
-            'svm__C': [0.1, 1, 10],  # Regularization parameter
-            'svm__kernel': ['linear', 'rbf'],  # Kernel type
-            #'svm__gamma': ['scale', 'auto'],  # Kernel coefficient (used for 'rbf')
-            'svm__class_weight': [None, 'balanced'],  # Handle imbalanced classes
-        }
+                # SVM Parameters
+                'svm__C': [0.1, 1, 10],  # Regularization parameter
+                'svm__kernel': ['linear', 'rbf'],  # Kernel type
+                #'svm__gamma': ['scale', 'auto'],  # Kernel coefficient (used for 'rbf')
+                'svm__class_weight': [None, 'balanced'],  # Handle imbalanced classes
+            }
+        else:
+            param_grid = {
+                'tfidf__ngram_range': [(1, 3)],  # bigrams, trigrams
+                'tfidf__max_features': [6000],  # Vocabulary size
+                'tfidf__max_df': [0.7],  # Maximum document frequency (proportion of documents)
+
+                # SVM Parameters
+                'svm__C': [1],  # Regularization parameter
+                'svm__kernel': ['linear'],  # Kernel type
+                'svm__class_weight': ['balanced'],  # Handle imbalanced classes
+            }
+
         param_grid = {
             'tfidf__ngram_range': [(1, 3)],  # bigrams, trigrams
             'tfidf__max_features': [6000],  # Vocabulary size
@@ -489,10 +648,11 @@ class SentimentAnalyzer:
             'svm__class_weight': ['balanced'],  # Handle imbalanced classes
         }
 
+        if self.analysis is None:
+            print("***********************")
+            print("******GRID SEARCH******")
+            print("***********************")
 
-        print("***********************")
-        print("******GRID SEARCH******")
-        print("***********************")
         # Perform grid search
         grid_search = GridSearchCV(
             pipeline,
@@ -505,17 +665,18 @@ class SentimentAnalyzer:
 
         grid_search.fit(X_train, y_train_encoded)
 
-        print(f"\nBest parameters: {grid_search.best_params_}")
-        print(f"Best cross-validation score: {grid_search.best_score_:.3f}")
+        if self.analysis is None:
+            print(f"\nBest parameters: {grid_search.best_params_}")
+            print(f"Best cross-validation score: {grid_search.best_score_:.3f}")
 
-        # Print top 3 parameter combinations
-        results_df = pd.DataFrame(grid_search.cv_results_)
-        top_3 = results_df.nlargest(3, 'mean_test_score')
-        print("\nTop 3 parameter combinations:")
-        for idx, row in top_3.iterrows():
-            print(f"\nRank {row['rank_test_score']}:")
-            print(f"Parameters: {row['params']}")
-            print(f"Mean CV Score: {row['mean_test_score']:.3f} (+/- {row['std_test_score'] * 2:.3f})")
+            # Print top 3 parameter combinations
+            results_df = pd.DataFrame(grid_search.cv_results_)
+            top_3 = results_df.nlargest(3, 'mean_test_score')
+            print("\nTop 3 parameter combinations:")
+            for idx, row in top_3.iterrows():
+                print(f"\nRank {row['rank_test_score']}:")
+                print(f"Parameters: {row['params']}")
+                print(f"Mean CV Score: {row['mean_test_score']:.3f} (+/- {row['std_test_score'] * 2:.3f})")
 
         return grid_search.best_params_
 
@@ -536,44 +697,60 @@ class SentimentAnalyzer:
             - Precision (Macro)
         """
         # Print the accuracy and detailed classification report
-        positive_benchmark = ["positive"] * len(y_pred)
-        negative_benchmark = ["negative"] * len(y_pred)
-        metrics_data = {
-            "Metric": ["Accuracy", "F1 Score (Macro)", "Recall (Macro)", "Precision (Macro)"],
-            "Model": [
-                accuracy_score(y_test, y_pred),
-                f1_score(y_test, y_pred, average="macro"),
-                recall_score(y_test, y_pred, average="macro"),
-                precision_score(y_test, y_pred, average="macro", zero_division=True),
-            ],
-            "Positive Benchmark": [
-                accuracy_score(y_test, positive_benchmark),
-                f1_score(y_test, positive_benchmark, average="macro"),
-                recall_score(y_test, positive_benchmark, average="macro"),
-                precision_score(y_test, positive_benchmark, average="macro", zero_division=True),
-            ],
-            "Negative Benchmark": [
-                accuracy_score(y_test, negative_benchmark),
-                f1_score(y_test, negative_benchmark, average="macro"),
-                recall_score(y_test, negative_benchmark, average="macro"),
-                precision_score(y_test, negative_benchmark, average="macro", zero_division=True),
-            ],
-        }
+        if self.analysis is None:
+            positive_benchmark = ["positive"] * len(y_pred)
+            negative_benchmark = ["negative"] * len(y_pred)
+            metrics_data = {
+                "Metric": ["Accuracy", "F1 Score (Macro)", "Recall (Macro)", "Precision (Macro)"],
+                "Model": [
+                    accuracy_score(y_test, y_pred),
+                    f1_score(y_test, y_pred, average="macro"),
+                    recall_score(y_test, y_pred, average="macro"),
+                    precision_score(y_test, y_pred, average="macro", zero_division=True),
+                ],
+                "Positive Benchmark": [
+                    accuracy_score(y_test, positive_benchmark),
+                    f1_score(y_test, positive_benchmark, average="macro"),
+                    recall_score(y_test, positive_benchmark, average="macro"),
+                    precision_score(y_test, positive_benchmark, average="macro", zero_division=True),
+                ],
+                "Negative Benchmark": [
+                    accuracy_score(y_test, negative_benchmark),
+                    f1_score(y_test, negative_benchmark, average="macro"),
+                    recall_score(y_test, negative_benchmark, average="macro"),
+                    precision_score(y_test, negative_benchmark, average="macro", zero_division=True),
+                ],
+            }
+        else:
+            metrics_data = {
+                "Metric": ["Accuracy", "F1 Score (Macro)", "Recall (Macro)", "Precision (Macro)"],
+                "Model": [
+                    accuracy_score(y_test, y_pred),
+                    f1_score(y_test, y_pred, average="macro"),
+                    recall_score(y_test, y_pred, average="macro"),
+                    precision_score(y_test, y_pred, average="macro", zero_division=True),
+                ]
+            }
 
         # Create DataFrame
         metrics_df = pd.DataFrame(metrics_data)
-        print("*******************")
-        print("******RESULTS******")
-        print("*******************")
-        print(metrics_df)
+        if self.analysis is None:
+            print("*******************")
+            print("******RESULTS******")
+            print("*******************")
+            print(metrics_df)
+        return metrics_df
 
-def train_Gen(train_file, val_file, model_dir, student_id=2320824):
+def train_Gen(train_file, val_file, model_dir, student_id=2320824, analysis=None):
     """
     Trains a Naive Bayes model for sentiment classification.
 
     Args:
         train_file: Path to the training data CSV file.
         val_file: Path to the validation data CSV file.
+        model_dir: Path to save the model
+        student_id: Random Seed
+        analysis: Determines whether to save the model or run analysis to compare effects of preprocessing
 
     This function performs the following steps:
         1. Loads and preprocesses training and validation data using `get_train_data`.
@@ -587,10 +764,14 @@ def train_Gen(train_file, val_file, model_dir, student_id=2320824):
     if not os.path.exists(model_dir):
         os.makedirs(model_dir)
 
-    print("*************************************")
-    print("----GENERATIVE MODEL: NAIVE BAYES----")
-    print("*************************************")
-    gen = SentimentAnalyzer(student_id=student_id)
+    if analysis is None:
+        print("*************************************")
+        print("----GENERATIVE MODEL: NAIVE BAYES----")
+        print("*************************************")
+    else:
+        print(f"++++----ANALYZING GENERATIVE MODEL: NAIVE BAYES {analysis.upper()}----++++")
+
+    gen = SentimentAnalyzer(student_id=student_id, analysis=analysis)
 
     # Get train and validation data
     train_df, val_df = gen.get_train_data(train_file, val_file)
@@ -630,16 +811,19 @@ def train_Gen(train_file, val_file, model_dir, student_id=2320824):
     model.fit(X_train_vec, y_train_encoded)
 
     # save model
-    gen.save_model(model_dir=model_dir, model_name='naive_bayes', model=model, vectorizer=vectorizer, label_encoder=gen.label_encoder)
+    if analysis is None:
+        gen.save_model(model_dir=model_dir, model_name='naive_bayes', model=model, vectorizer=vectorizer, label_encoder=gen.label_encoder)
 
     # Evaluate the model
     y_pred_encoded = model.predict(X_test_vec)
     y_pred = gen.label_encoder.inverse_transform(y_pred_encoded)
-    gen.evaluation_results(y_test, y_pred)
+    metrics_df = gen.evaluation_results(y_test, y_pred)
 
-    return vectorizer, model
+    return metrics_df
 
-train_Gen(f'{data_dir}train.csv', f'{data_dir}valid.csv', model_gen, student_id=STUDENT_ID)
+metrics_df = train_Gen(f'{data_dir}train.csv', f'{data_dir}valid.csv', model_gen, student_id=STUDENT_ID)
+metrics_df['Model_gen'] = metrics_df['Model']
+del metrics_df['Model']
 
 def test_Gen(test_file, model_dir, student_id=2320824):
 
@@ -671,15 +855,18 @@ def test_Gen(test_file, model_dir, student_id=2320824):
 
     return 'out_label_model_gen', y_pred
 
-test_Gen(f'{data_dir}test.csv', model_gen, student_id=STUDENT_ID)
+#test_Gen(f'{data_dir}test.csv', model_gen, student_id=STUDENT_ID)
 
-def train_Dis(train_file, val_file, model_dir, student_id=2320824):
+def train_Dis(train_file, val_file, model_dir, student_id=2320824, analysis=None):
     """
     Trains a Support Vector Machine (SVM) model for sentiment classification.
 
     Args:
         train_file: Path to the training data CSV file.
         val_file: Path to the validation data CSV file.
+        model_dir: Path to save the model
+        student_id: Random Seed
+        analysis: Determines whether to save the model or run analysis to compare effects of preprocessing
 
     This function performs the following steps:
         1. Loads and preprocesses training and validation data using `get_train_data`.
@@ -693,10 +880,14 @@ def train_Dis(train_file, val_file, model_dir, student_id=2320824):
     if not os.path.exists(model_dir):
         os.makedirs(model_dir)
 
-    print("*********************************")
-    print("----DISCRIMINATIVE MODEL: SVM----")
-    print("*********************************")
-    dis = SentimentAnalyzer(student_id=student_id)
+    if analysis is None:
+        print("*********************************")
+        print("----DISCRIMINATIVE MODEL: SVM----")
+        print("*********************************")
+    else:
+        print(f"++++----ANALYZING DISCRIMINATIVE MODEL: SVM {analysis.upper()}----++++")
+
+    dis = SentimentAnalyzer(student_id=student_id, analysis=analysis)
     train_df_unbal, val_df = dis.get_train_data(train_file, val_file)
     train_df = dis.balance_dataset(train_df_unbal)
 
@@ -709,43 +900,56 @@ def train_Dis(train_file, val_file, model_dir, student_id=2320824):
     # Find optimal parameters
     best_params = dis.dis_find_optimal_params(X_train, y_train)
 
-    # Extract best parameters
+    # Extract TF-IDF parameters
     ngram_range = best_params['tfidf__ngram_range']
     max_features = best_params['tfidf__max_features']
+    max_df = best_params['tfidf__max_df']
 
-    print(f"Training final model with ngram_range={ngram_range}, max_features={max_features}")
+    # Extract SVM parameters
+    svm_kernel = best_params['svm__kernel']
+    svm_C = best_params['svm__C']
+    svm_class_weight = best_params['svm__class_weight']
+
+    print(f"Training final model with ngram_range={ngram_range}, max_features={max_features}, SVM: kernel={svm_kernel}, C={svm_C}, class_weight={svm_class_weight}")
 
     # Initialize vectorizer with optimal parameters
     vectorizer = TfidfVectorizer(
         stop_words='english',
         max_features=max_features,
-        ngram_range=ngram_range
+        ngram_range=ngram_range,
+        max_df=max_df
     )
 
     # Transform the text data
-    X_train_tfidf = vectorizer.fit_transform(X_train)
-    X_test_tfidf = vectorizer.transform(X_test)
+    if dis.support_emoji:
+        X_train_tfidf, vectorizer = dis.create_feature_matrix(X_train, vectorizer=vectorizer, training=True)
+        X_test_tfidf, _ = dis.create_feature_matrix(X_test, vectorizer=vectorizer, training=False)
+    else:
+        X_train_tfidf = vectorizer.fit_transform(X_train)
+        X_test_tfidf = vectorizer.transform(X_test)
 
     # Encode labels
     y_train_encoded = dis.label_encoder.fit_transform(y_train)
 
     # Train the SVM model
-    svm_model = SVC(kernel='linear')
+    svm_model = SVC(kernel=svm_kernel, C=svm_C, class_weight=svm_class_weight)
     svm_model.fit(X_train_tfidf, y_train_encoded)
 
     # save the model
-    dis.save_model(model_dir=model_dir, model_name='svm', model=svm_model, vectorizer=vectorizer, label_encoder=dis.label_encoder)
+    if analysis is None:
+        dis.save_model(model_dir=model_dir, model_name='svm', model=svm_model, vectorizer=vectorizer, label_encoder=dis.label_encoder)
 
     # Evaluate the model
     y_pred_encoded = svm_model.predict(X_test_tfidf)
 
     # Convert predictions back to original labels for evaluation
     y_pred = dis.label_encoder.inverse_transform(y_pred_encoded)
-    dis.evaluation_results(y_test, y_pred)
+    metrics_df = dis.evaluation_results(y_test, y_pred)
 
-    return vectorizer, svm_model
+    return metrics_df
 
-train_Dis(f'{data_dir}train.csv', f'{data_dir}valid.csv', model_dis, student_id=STUDENT_ID)
+metrics_df2 = train_Dis(f'{data_dir}train.csv', f'{data_dir}valid.csv', model_dis, student_id=STUDENT_ID)
+metrics_df['Model_dis'] = metrics_df2['Model']
 
 def test_Dis(test_file, model_dir, student_id=2320824):
 
@@ -764,7 +968,10 @@ def test_Dis(test_file, model_dir, student_id=2320824):
     model, vectorizer, label_encoder = dis.load_model(model_dir=model_dir, model_name='svm')
 
     # Initialize vectorizer
-    X_test_vec = vectorizer.transform(test_df['text'])
+    if dis.support_emoji:
+        X_test_vec, _ = dis.create_feature_matrix(test_df['text'], vectorizer=vectorizer, training=False)
+    else:
+        X_test_vec = vectorizer.transform(test_df['text'])
 
     # Evaluate the model
     y_pred_encoded = model.predict(X_test_vec)
@@ -779,3 +986,14 @@ def test_Dis(test_file, model_dir, student_id=2320824):
     return 'out_label_model_dis', y_pred
 
 test_Dis(f'{data_dir}test.csv', model_dis, student_id=STUDENT_ID)
+
+# Further Analysis
+print("\n\nFurther Analysis\n")
+metrics_df2 = train_Gen(f'{data_dir}train.csv', f'{data_dir}valid.csv', model_gen, student_id=STUDENT_ID, analysis='without_emoji')
+metrics_df['Model_gen_no_emoji'] = metrics_df2['Model']
+
+metrics_df2 = train_Dis(f'{data_dir}train.csv', f'{data_dir}valid.csv', model_gen, student_id=STUDENT_ID, analysis='without_emoji')
+metrics_df['Model_dis_no_emoji'] = metrics_df2['Model']
+
+print("*******Results of Analysis******")
+print(metrics_df)
