@@ -389,28 +389,21 @@ class SentimentAnalyzer:
         ])
 
         # Define parameter grid
-        if self.analysis is None:
+        if self.analysis is not None or (self.analysis is None and self.debug):
+            param_grid = {
+                'vectorizer__max_features': [3000],
+                'vectorizer__ngram_range': [(1, 2)],
+                'vectorizer__min_df': [4],  # Minimum document frequency
+                'nb__fit_prior': [True]  # Whether to learn class prior probabilities
+            }
+        else:
             param_grid = {
                 'vectorizer__max_features': [1000, 2000, 3000, 6000],
                 'vectorizer__ngram_range': [(1, 2), (1, 3)],
                 'vectorizer__min_df': [2, 3, 4],  # Minimum document frequency
                 'nb__fit_prior': [True, False]  # Whether to learn class prior probabilities
             }
-        else:
-            param_grid = {
-                'vectorizer__max_features': [3000],
-                'vectorizer__ngram_range': [(1, 2)],
-                'vectorizer__min_df': [4],  # Minimum document frequency
-                'nb__fit_prior': [True]  # Whether to learn class prior probabilities
-            }
 
-        if self.debug:
-            param_grid = {
-                'vectorizer__max_features': [3000],
-                'vectorizer__ngram_range': [(1, 2)],
-                'vectorizer__min_df': [4],  # Minimum document frequency
-                'nb__fit_prior': [True]  # Whether to learn class prior probabilities
-            }
 
         # Perform grid search
         grid_search = GridSearchCV(
@@ -525,7 +518,18 @@ class SentimentAnalyzer:
         ])
 
         # Define parameter grid
-        if self.analysis is None:
+        if self.analysis is not None or (self.analysis is None and self.debug):
+            param_grid = {
+                'tfidf__ngram_range': [(1, 3)],  # bigrams, trigrams
+                'tfidf__max_features': [6000],  # Vocabulary size
+                'tfidf__max_df': [0.7],  # Maximum document frequency (proportion of documents)
+
+                # SVM Parameters
+                'svm__C': [1],  # Regularization parameter
+                'svm__kernel': ['linear'],  # Kernel type
+                'svm__class_weight': ['balanced'],  # Handle imbalanced classes
+            }
+        else:
             param_grid = {
                 'tfidf__ngram_range': [(1, 2), (1, 3)],  # bigrams, trigrams
                 'tfidf__max_features': [3000, 6000],  # Vocabulary size
@@ -534,32 +538,9 @@ class SentimentAnalyzer:
                 # SVM Parameters
                 'svm__C': [0.1, 1, 10],  # Regularization parameter
                 'svm__kernel': ['linear', 'rbf'],  # Kernel type
-                #'svm__gamma': ['scale', 'auto'],  # Kernel coefficient (used for 'rbf')
                 'svm__class_weight': [None, 'balanced'],  # Handle imbalanced classes
             }
-        else:
-            param_grid = {
-                'tfidf__ngram_range': [(1, 3)],  # bigrams, trigrams
-                'tfidf__max_features': [6000],  # Vocabulary size
-                'tfidf__max_df': [0.7],  # Maximum document frequency (proportion of documents)
 
-                # SVM Parameters
-                'svm__C': [1],  # Regularization parameter
-                'svm__kernel': ['linear'],  # Kernel type
-                'svm__class_weight': ['balanced'],  # Handle imbalanced classes
-            }
-
-        if self.debug:
-            param_grid = {
-                'tfidf__ngram_range': [(1, 3)],  # bigrams, trigrams
-                'tfidf__max_features': [6000],  # Vocabulary size
-                'tfidf__max_df': [0.7],  # Maximum document frequency (proportion of documents)
-
-                # SVM Parameters
-                'svm__C': [1],  # Regularization parameter
-                'svm__kernel': ['linear'],  # Kernel type
-                'svm__class_weight': ['balanced'],  # Handle imbalanced classes
-            }
 
         if self.analysis is None:
             print("***********************")
@@ -768,7 +749,7 @@ def test_Gen(test_file, model_dir, student_id=2320824):
 
     return 'out_label_model_gen', y_pred
 
-#test_Gen(f'{data_dir}test.csv', model_gen, student_id=STUDENT_ID)
+test_Gen(f'{data_dir}test.csv', model_gen, student_id=STUDENT_ID)
 
 def train_Dis(train_file, val_file, model_dir, student_id=2320824, analysis=None):
     """
@@ -882,7 +863,10 @@ def get_examples(df):
     # Helper function to extract examples
     def add_example(key, condition_df):
         if not condition_df.empty:
-            examples[key] = condition_df.iloc[:3]
+            examples[key] = condition_df.iloc[:3]  # Take up to 3 examples
+        else:
+            # Add an empty DataFrame with the same structure as the input
+            examples[key] = pd.DataFrame(columns=df.columns)
 
     # Scenarios for both positive
     add_example('both_positive_with_emoji', df_with_emoji[
@@ -954,9 +938,9 @@ def test_Dis(test_file, model_dir, student_id=2320824):
     print("Saved Discriminative test results to:", f'{model_dir}text.csv')
 
     print("*********EXAMPLES OF PREDICTIONS*********")
-    examples = pd.DataFrame(get_examples(test_df_o)).T
-    print(examples)
-    examples.to_csv(f'examples.csv', index=False)
+    examples_df = pd.concat(get_examples(test_df_o), names=["Scenario"]).reset_index(level=0)
+    print(examples_df)
+    examples_df.to_csv(f'examples.csv', index=False)
 
     return 'out_label_model_dis', y_pred
 
