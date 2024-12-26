@@ -743,9 +743,9 @@ def test_Gen(test_file, model_dir, student_id=2320824):
     y_pred = label_encoder.inverse_transform(y_pred_encoded)
     #gen.evaluation_results(test_df['sentiment'], y_pred)
     test_df_o['out_label_model_gen'] = y_pred
-    test_df_o.to_csv(f'{model_dir}text.csv', index=False)
+    test_df_o.to_csv(f'{model_dir}test.csv', index=False)
     test_df_o.to_csv(test_file, index=False)
-    print("Saved Generative test results to:", f'{model_dir}text.csv')
+    print("Saved Generative test results to:", f'{model_dir}test.csv')
 
     return 'out_label_model_gen', y_pred
 
@@ -933,9 +933,9 @@ def test_Dis(test_file, model_dir, student_id=2320824):
     #dis.evaluation_results(test_df['sentiment'], y_pred)
 
     test_df_o['out_label_model_dis'] = y_pred
-    test_df_o.to_csv(f'{model_dir}text.csv', index=False)
+    test_df_o.to_csv(f'{model_dir}test.csv', index=False)
     test_df_o.to_csv(test_file, index=False)
-    print("Saved Discriminative test results to:", f'{model_dir}text.csv')
+    print("Saved Discriminative test results to:", f'{model_dir}test.csv')
 
     print("*********EXAMPLES OF PREDICTIONS*********")
     examples_df = pd.concat(get_examples(test_df_o), names=["Scenario"]).reset_index(level=0)
