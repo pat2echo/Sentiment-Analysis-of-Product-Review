@@ -11,7 +11,6 @@ import re
 from imblearn.over_sampling import SMOTE
 import pickle
 import emoji
-from collections import Counter
 
 import nltk
 nltk.download('stopwords')
@@ -71,10 +70,19 @@ class SentimentAnalyzer:
         self.label_encoder = LabelEncoder()
         self.registration_number = student_id
         self.analysis = analysis
+        self.debug = False
         self.support_emoji = True
+        self.support_lemmatize = False
+        self.support_stopwords = False
 
         if self.analysis == 'without_emoji':
             self.support_emoji = False
+
+        if self.analysis == 'lemmatize':
+            self.support_lemmatize = True
+
+        if self.analysis == 'stopwords':
+            self.support_stopwords = True
 
         # Custom Created Dataset for first-level-validation
         self.reviews = [
@@ -91,62 +99,6 @@ class SentimentAnalyzer:
 
         # Add domain-specific stopwords
         self.stop_words.update(['product', 'item', 'buy', 'purchased'])
-
-        # Add emoji mapping for sentiment
-        self.emoji_sentiment = {
-            '😊': 'positive', '😃': 'positive', '😄': 'positive', '👍': 'positive',
-            '❤️': 'positive', '😍': 'positive', '🎉': 'positive', '✨': 'positive',
-            '😢': 'negative', '😞': 'negative', '😠': 'negative', '👎': 'negative',
-            '😡': 'negative', '💔': 'negative', '😒': 'negative', '😩': 'negative'
-        }
-
-    def extract_emojis(self, text):
-        """
-        Extracts emojis from text and returns them as a list.
-
-        Args:
-            text (str): Input text containing emojis
-
-        Returns:
-            list: List of emojis found in the text
-        """
-        return [c for c in text if c in emoji.EMOJI_DATA]
-
-    def get_emoji_sentiment_score(self, emojis):
-        """
-        Calculates sentiment score based on emojis.
-
-        Args:
-            emojis (list): List of emojis from text
-
-        Returns:
-            float: Sentiment score between -1 and 1
-        """
-        score = 0
-        for e in emojis:
-            if e in self.emoji_sentiment:
-                score += 1 if self.emoji_sentiment[e] == 'positive' else -1
-        return score / len(emojis) if emojis else 0
-
-    def extract_text_features(self, text):
-        """
-        Extracts emoji-related features.
-
-        Args:
-            text (str): Input text
-
-        Returns:
-            dict: Dictionary containing text features
-        """
-        emojis = self.extract_emojis(text)
-        emoji_count = len(emojis)
-        emoji_sentiment = self.get_emoji_sentiment_score(emojis)
-
-        return {
-            'emoji_count': emoji_count,
-            'emoji_sentiment': emoji_sentiment,
-            'emojis': Counter(emojis)
-        }
 
     def count_text_features(self, series):
         """
@@ -293,13 +245,7 @@ class SentimentAnalyzer:
         text = row['text']
 
         if self.support_emoji:
-            # Extract features before cleaning
-            features = self.extract_text_features(text)
-
-            # Add emoji features to row
-            row['emoji_count'] = features['emoji_count']
-            row['emoji_sentiment'] = features['emoji_sentiment']
-
+            # Extract emoji features before cleaning
             text = self.preprocess_text_with_emojis(text)
 
         # Clean text
@@ -310,10 +256,12 @@ class SentimentAnalyzer:
         tokens = word_tokenize(cleaned_text)
 
         # Remove stopwords
-        #tokens = self.remove_stopwords(tokens)
+        if self.support_stopwords:
+            tokens = self.remove_stopwords(tokens)
 
         # Lemmatize
-        #tokens = self.lemmatize_text(tokens)
+        if self.support_lemmatize:
+            tokens = self.lemmatize_text(tokens)
 
         # Join tokens back into text
         row['text'] = ' '.join(tokens)
@@ -414,43 +362,6 @@ class SentimentAnalyzer:
 
         return test_df, test_df_o
 
-    def create_feature_matrix(self, texts, vectorizer=None, training=False):
-        """
-        Creates a feature matrix combining text vectors and emoji features.
-
-        Args:
-            texts (list): List of text samples
-            vectorizer: Optional pre-fitted vectorizer
-            training (bool): Whether this is for training
-
-        Returns:
-            tuple: (combined_features, vectorizer)
-        """
-        # Extract emoji features
-        emoji_features = []
-        for text in texts:
-            features = self.extract_text_features(text)
-            emoji_features.append([
-                features['emoji_count'],
-                features['emoji_sentiment']
-            ])
-        emoji_features = np.array(emoji_features)
-
-        if vectorizer is None:
-            print("No Vectorizer defined")
-
-        # Create text features
-        if training:
-            text_features = vectorizer.fit_transform(texts)
-        else:
-            text_features = vectorizer.transform(texts)
-
-        # Combine features
-        text_features_dense = text_features.toarray()
-        combined_features = np.hstack((text_features_dense, emoji_features))
-
-        return combined_features, vectorizer
-
     def gen_find_optimal_params(self, X_train, y_train, cv=5):
         """
         Performs grid search to find optimal parameters for CountVectorizer and MultinomialNB.
@@ -493,12 +404,13 @@ class SentimentAnalyzer:
                 'nb__fit_prior': [True]  # Whether to learn class prior probabilities
             }
 
-        param_grid = {
-            'vectorizer__max_features': [3000],
-            'vectorizer__ngram_range': [(1, 2)],
-            'vectorizer__min_df': [4],  # Minimum document frequency
-            'nb__fit_prior': [True]  # Whether to learn class prior probabilities
-        }
+        if self.debug:
+            param_grid = {
+                'vectorizer__max_features': [3000],
+                'vectorizer__ngram_range': [(1, 2)],
+                'vectorizer__min_df': [4],  # Minimum document frequency
+                'nb__fit_prior': [True]  # Whether to learn class prior probabilities
+            }
 
         # Perform grid search
         grid_search = GridSearchCV(
@@ -637,16 +549,17 @@ class SentimentAnalyzer:
                 'svm__class_weight': ['balanced'],  # Handle imbalanced classes
             }
 
-        param_grid = {
-            'tfidf__ngram_range': [(1, 3)],  # bigrams, trigrams
-            'tfidf__max_features': [6000],  # Vocabulary size
-            'tfidf__max_df': [0.7],  # Maximum document frequency (proportion of documents)
+        if self.debug:
+            param_grid = {
+                'tfidf__ngram_range': [(1, 3)],  # bigrams, trigrams
+                'tfidf__max_features': [6000],  # Vocabulary size
+                'tfidf__max_df': [0.7],  # Maximum document frequency (proportion of documents)
 
-            # SVM Parameters
-            'svm__C': [1],  # Regularization parameter
-            'svm__kernel': ['linear'],  # Kernel type
-            'svm__class_weight': ['balanced'],  # Handle imbalanced classes
-        }
+                # SVM Parameters
+                'svm__C': [1],  # Regularization parameter
+                'svm__kernel': ['linear'],  # Kernel type
+                'svm__class_weight': ['balanced'],  # Handle imbalanced classes
+            }
 
         if self.analysis is None:
             print("***********************")
@@ -921,12 +834,8 @@ def train_Dis(train_file, val_file, model_dir, student_id=2320824, analysis=None
     )
 
     # Transform the text data
-    if dis.support_emoji:
-        X_train_tfidf, vectorizer = dis.create_feature_matrix(X_train, vectorizer=vectorizer, training=True)
-        X_test_tfidf, _ = dis.create_feature_matrix(X_test, vectorizer=vectorizer, training=False)
-    else:
-        X_train_tfidf = vectorizer.fit_transform(X_train)
-        X_test_tfidf = vectorizer.transform(X_test)
+    X_train_tfidf = vectorizer.fit_transform(X_train)
+    X_test_tfidf = vectorizer.transform(X_test)
 
     # Encode labels
     y_train_encoded = dis.label_encoder.fit_transform(y_train)
@@ -951,6 +860,70 @@ def train_Dis(train_file, val_file, model_dir, student_id=2320824, analysis=None
 metrics_df2 = train_Dis(f'{data_dir}train.csv', f'{data_dir}valid.csv', model_dis, student_id=STUDENT_ID)
 metrics_df['Model_dis'] = metrics_df2['Model']
 
+def contains_emoji(text):
+    """
+    Check if a text contains any emoji using the emoji library.
+    """
+    return any(char in emoji.EMOJI_DATA for char in text)
+
+def get_examples(df):
+    """
+    Return one example of each scenario:
+    1. Both values are positive, with and without emojis.
+    2. Both values are negative, with and without emojis.
+    3. One positive and the other negative, with and without emojis.
+    """
+    examples = {}
+
+    # Filter based on the presence of emojis
+    df_with_emoji = df[df['text'].apply(contains_emoji)]
+    df_without_emoji = df[~df['text'].apply(contains_emoji)]
+
+    # Helper function to extract examples
+    def add_example(key, condition_df):
+        if not condition_df.empty:
+            examples[key] = condition_df.iloc[:3]
+
+    # Scenarios for both positive
+    add_example('both_positive_with_emoji', df_with_emoji[
+        (df_with_emoji['out_label_model_dis'] == 'positive') &
+        (df_with_emoji['out_label_model_gen'] == 'positive')
+    ])
+    add_example('both_positive_text_only', df_without_emoji[
+        (df_without_emoji['out_label_model_dis'] == 'positive') &
+        (df_without_emoji['out_label_model_gen'] == 'positive')
+    ])
+
+    # Scenarios for both negative
+    add_example('both_negative_with_emoji', df_with_emoji[
+        (df_with_emoji['out_label_model_dis'] == 'negative') &
+        (df_with_emoji['out_label_model_gen'] == 'negative')
+    ])
+    add_example('both_negative_text_only', df_without_emoji[
+        (df_without_emoji['out_label_model_dis'] == 'negative') &
+        (df_without_emoji['out_label_model_gen'] == 'negative')
+    ])
+
+    # Scenarios for one positive and the other negative
+    add_example('dis_positive_with_emoji', df_with_emoji[
+        (df_with_emoji['out_label_model_dis'] == 'positive') &
+        (df_with_emoji['out_label_model_gen'] == 'negative')
+    ])
+    add_example('dis_positive_text_only', df_without_emoji[
+        (df_without_emoji['out_label_model_dis'] == 'positive') &
+        (df_without_emoji['out_label_model_gen'] == 'negative')
+    ])
+    add_example('gen_positive_with_emoji', df_with_emoji[
+        (df_with_emoji['out_label_model_dis'] == 'negative') &
+        (df_with_emoji['out_label_model_gen'] == 'positive')
+    ])
+    add_example('gen_positive_text_only', df_without_emoji[
+        (df_without_emoji['out_label_model_dis'] == 'negative') &
+        (df_without_emoji['out_label_model_gen'] == 'positive')
+    ])
+
+    return examples
+
 def test_Dis(test_file, model_dir, student_id=2320824):
 
     if not os.path.exists(model_dir):
@@ -968,10 +941,7 @@ def test_Dis(test_file, model_dir, student_id=2320824):
     model, vectorizer, label_encoder = dis.load_model(model_dir=model_dir, model_name='svm')
 
     # Initialize vectorizer
-    if dis.support_emoji:
-        X_test_vec, _ = dis.create_feature_matrix(test_df['text'], vectorizer=vectorizer, training=False)
-    else:
-        X_test_vec = vectorizer.transform(test_df['text'])
+    X_test_vec = vectorizer.transform(test_df['text'])
 
     # Evaluate the model
     y_pred_encoded = model.predict(X_test_vec)
@@ -983,17 +953,24 @@ def test_Dis(test_file, model_dir, student_id=2320824):
     test_df_o.to_csv(test_file, index=False)
     print("Saved Discriminative test results to:", f'{model_dir}text.csv')
 
+    print("*********EXAMPLES OF PREDICTIONS*********")
+    examples = pd.DataFrame(get_examples(test_df_o)).T
+    print(examples)
+    examples.to_csv(f'examples.csv', index=False)
+
     return 'out_label_model_dis', y_pred
 
 test_Dis(f'{data_dir}test.csv', model_dis, student_id=STUDENT_ID)
 
-# Further Analysis
-print("\n\nFurther Analysis\n")
-metrics_df2 = train_Gen(f'{data_dir}train.csv', f'{data_dir}valid.csv', model_gen, student_id=STUDENT_ID, analysis='without_emoji')
-metrics_df['Model_gen_no_emoji'] = metrics_df2['Model']
 
-metrics_df2 = train_Dis(f'{data_dir}train.csv', f'{data_dir}valid.csv', model_gen, student_id=STUDENT_ID, analysis='without_emoji')
-metrics_df['Model_dis_no_emoji'] = metrics_df2['Model']
+# Further Analysis
+print("\n\nFurther Analysis on the effects of Preprocessing\n")
+for x in ['without_emoji', 'lemmatize', 'stopwords']:
+    metrics_df2 = train_Gen(f'{data_dir}train.csv', f'{data_dir}valid.csv', model_gen, student_id=STUDENT_ID, analysis=x)
+    metrics_df[f'Model_gen_{x}'] = metrics_df2['Model']
+
+    metrics_df2 = train_Dis(f'{data_dir}train.csv', f'{data_dir}valid.csv', model_gen, student_id=STUDENT_ID, analysis=x)
+    metrics_df[f'Model_dis_{x}'] = metrics_df2['Model']
 
 print("*******Results of Analysis******")
-print(metrics_df)
+print(metrics_df.T)
