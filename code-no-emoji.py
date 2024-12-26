@@ -2,7 +2,7 @@ import os
 import subprocess
 import sys
 subprocess.check_call([sys.executable, "-m", "pip", "install", "nltk"])
-subprocess.check_call([sys.executable, "-m", "pip", "install", "imblearn"])git
+subprocess.check_call([sys.executable, "-m", "pip", "install", "imblearn"])
 
 import numpy as np
 import pandas as pd
@@ -103,8 +103,8 @@ class SentimentAnalyzer:
         for text in series:
             if isinstance(text, str):
                 url_count += len(
-                    re.findall(r'http\S+|www\S+|https\S+', text, flags=re.MULTILINE))
-                video_tag_count += len(re.findall(r'(?i)\[\[video.*?\]\]', text, flags=re.IGNORECASE))
+                    re.findall(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', text))
+                video_tag_count += len(re.findall(r'<video.*?>.*?</video>', text, flags=re.IGNORECASE))
                 html_tag_count += len(re.findall(r'<[^>]+>', text))
                 non_alphabetic_count += len(re.findall(r'[^a-zA-Z\s]', text))
                 emoji_count += len(re.findall(r'[^\w\s]', text))  # Basic emoji detection (may need refinement)
@@ -594,6 +594,7 @@ def train_Gen(train_file, val_file, model_dir, student_id=2320824):
 
     # Get train and validation data
     train_df, val_df = gen.get_train_data(train_file, val_file)
+    return
     #train_df = gen.balance_dataset(train_df_unbal)
 
     # Split into train and test sets
@@ -671,7 +672,7 @@ def test_Gen(test_file, model_dir, student_id=2320824):
 
     return 'out_label_model_gen', y_pred
 
-test_Gen(f'{data_dir}test.csv', model_gen, student_id=STUDENT_ID)
+#test_Gen(f'{data_dir}test.csv', model_gen, student_id=STUDENT_ID)
 
 def train_Dis(train_file, val_file, model_dir, student_id=2320824):
     """
@@ -745,7 +746,7 @@ def train_Dis(train_file, val_file, model_dir, student_id=2320824):
 
     return vectorizer, svm_model
 
-train_Dis(f'{data_dir}train.csv', f'{data_dir}valid.csv', model_dis, student_id=STUDENT_ID)
+#train_Dis(f'{data_dir}train.csv', f'{data_dir}valid.csv', model_dis, student_id=STUDENT_ID)
 
 def test_Dis(test_file, model_dir, student_id=2320824):
 
@@ -778,4 +779,4 @@ def test_Dis(test_file, model_dir, student_id=2320824):
 
     return 'out_label_model_dis', y_pred
 
-test_Dis(f'{data_dir}test.csv', model_dis, student_id=STUDENT_ID)
+#test_Dis(f'{data_dir}test.csv', model_dis, student_id=STUDENT_ID)
