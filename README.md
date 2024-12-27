@@ -11,3 +11,4 @@
 - Make Predictions on the Test Dataset and the Output in the Model Directory
 - Select 3 examples from the Test Dataset to compare the model's performance
 - Analyze the effects of lemmatization, stop words removal and emoji on the models performance
+- Combine both models using stacking and voting

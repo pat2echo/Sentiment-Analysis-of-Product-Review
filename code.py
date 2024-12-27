@@ -32,6 +32,7 @@ from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, recall_s
 
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelEncoder
+from sklearn.linear_model import LogisticRegression
 
 STUDENT_ID = 2320824
 ASSIGNMENT_BASE_PATH = '/content/gdrive/MyDrive/CE807-24-SU/Reassessment'
@@ -959,4 +960,127 @@ for x in ['without_emoji', 'lemmatize', 'stopwords']:
     metrics_df[f'Model_dis_{x}'] = metrics_df2['Model']
 
 print("*******Results of Analysis******")
+print(metrics_df.T)
+
+
+class EnsembleClassifier:
+    def __init__(self, nb_model, nb_vectorizer, nb_encoder, svm_model, svm_vectorizer, svm_encoder,
+                 stacking_type='meta', student_id=2320824):
+        self.nb_model = nb_model
+        self.nb_vectorizer = nb_vectorizer
+        self.nb_encoder = nb_encoder
+        self.svm_model = svm_model
+        self.svm_vectorizer = svm_vectorizer
+        self.svm_encoder = svm_encoder
+        self.stacking_type = stacking_type
+
+        # Grid search for meta-classifier
+        # param_grid = {
+        #     'kernel': ['rbf', 'linear', 'poly'],
+        #     'C': [0.1, 1],
+        #     #'gamma': ['scale', 'auto', 0.1, 0.01],
+        #     'class_weight': ['balanced']
+        # }
+        #
+        # base_clf = SVC(probability=True, random_state=student_id)
+
+        param_grid = {
+            'C': [0.01, 0.1, 1.0],
+            'class_weight': ['balanced'],
+            #'penalty': ['l1', 'l2'],
+            #'solver': ['liblinear', 'saga']
+        }
+
+        base_clf = LogisticRegression(random_state=student_id, max_iter=1000)
+        self.meta_classifier = GridSearchCV(base_clf, param_grid, cv=5, scoring='f1_macro')
+
+    def get_meta_features(self, texts):
+        # Base model predictions
+        X_nb = self.nb_vectorizer.transform(texts)
+        nb_probs = self.nb_model.predict_proba(X_nb)
+
+        X_svm = self.svm_vectorizer.transform(texts)
+        svm_dists = self.svm_model.decision_function(X_svm)
+        svm_probs = 1 / (1 + np.exp(-svm_dists))
+        svm_probs = np.column_stack((1 - svm_probs, svm_probs))
+
+        # Additional features
+        text_lengths = np.array([len(text.split()) for text in texts]).reshape(-1, 1)
+        prediction_agreement = (nb_probs.argmax(axis=1) == svm_probs.argmax(axis=1)).reshape(-1, 1)
+        confidence_scores = np.maximum(nb_probs.max(axis=1), svm_probs.max(axis=1)).reshape(-1, 1)
+
+        # Combine all features
+        meta_features = np.hstack((
+            nb_probs,
+            svm_probs,
+            text_lengths,
+            prediction_agreement,
+            confidence_scores,
+            nb_probs * svm_probs  # Interaction features
+        ))
+
+        return meta_features
+
+    def predict_proba(self, texts):
+        if self.stacking_type == 'meta':
+            meta_features = self.get_meta_features(texts)
+            return self.meta_classifier.predict_proba(meta_features)
+        else:
+            X_nb = self.nb_vectorizer.transform(texts)
+            nb_probs = self.nb_model.predict_proba(X_nb)
+
+            X_svm = self.svm_vectorizer.transform(texts)
+            svm_dists = self.svm_model.decision_function(X_svm)
+            svm_probs = 1 / (1 + np.exp(-svm_dists))
+            svm_probs = np.column_stack((1 - svm_probs, svm_probs))
+
+            return (0.55 * nb_probs) + (0.45 * svm_probs)
+
+    def fit(self, X_train, y_train):
+        if self.stacking_type == 'meta':
+            meta_features = self.get_meta_features(X_train)
+            self.meta_classifier.fit(meta_features, y_train)
+            print(f"Best meta-classifier parameters: {self.meta_classifier.best_params_}")
+
+    def predict(self, texts):
+        probs = self.predict_proba(texts)
+        return self.nb_encoder.inverse_transform((probs[:, 1] >= 0.5).astype(int))
+
+def train_ensemble(train_file, val_file, nb_dir, svm_dir, ensemble_type='meta'):
+    # Load base models
+    gen = SentimentAnalyzer()
+    nb_model, nb_vec, nb_enc = gen.load_model(nb_dir, 'naive_bayes')
+    svm_model, svm_vec, svm_enc = gen.load_model(svm_dir, 'svm')
+
+    # Create and train ensemble
+    ensemble = EnsembleClassifier(nb_model, nb_vec, nb_enc,
+                                  svm_model, svm_vec, svm_enc,
+                                  stacking_type=ensemble_type)
+
+    # Get training data
+    train_df, val_df = gen.get_train_data(train_file, val_file)
+    X_train = train_df['text']
+    y_train_enc = nb_enc.transform(train_df['sentiment'])
+
+    # Train ensemble
+    ensemble.fit(X_train, y_train_enc)
+
+    # Evaluate
+    X_test = val_df['text']
+    y_pred = ensemble.predict(X_test)
+    metrics_df = gen.evaluation_results(val_df['sentiment'], y_pred)
+
+    return ensemble, metrics_df
+
+
+# Try both ensemble methods
+ensemble_stack, metrics_stack = train_ensemble(f'{data_dir}train.csv', f'{data_dir}valid.csv',
+                                               model_gen, model_dis, 'meta')
+metrics_df['Model_ensemble_stack'] = metrics_stack['Model']
+
+ensemble_vote, metrics_vote = train_ensemble(f'{data_dir}train.csv', f'{data_dir}valid.csv',
+                                             model_gen, model_dis, 'vote')
+metrics_df['Model_ensemble_vote'] = metrics_vote['Model']
+
+print("\nFinal Results Comparison:")
 print(metrics_df.T)
