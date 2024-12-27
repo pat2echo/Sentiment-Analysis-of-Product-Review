@@ -25,7 +25,7 @@ from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.naive_bayes import MultinomialNB
 
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.svm import SVC
+from sklearn.svm import SVC, LinearSVC
 
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, recall_score, precision_score
@@ -514,7 +514,7 @@ class SentimentAnalyzer:
         # Define the pipeline
         pipeline = Pipeline([
             ('tfidf', TfidfVectorizer(stop_words='english')),
-            ('svm', SVC(kernel='linear'))
+            ('svm', LinearSVC())
         ])
 
         # Define parameter grid
@@ -526,7 +526,7 @@ class SentimentAnalyzer:
 
                 # SVM Parameters
                 'svm__C': [1],  # Regularization parameter
-                'svm__kernel': ['linear'],  # Kernel type
+                #'svm__kernel': ['linear'],  # Kernel type
                 'svm__class_weight': ['balanced'],  # Handle imbalanced classes
             }
         else:
@@ -537,7 +537,7 @@ class SentimentAnalyzer:
 
                 # SVM Parameters
                 'svm__C': [0.1, 1, 10],  # Regularization parameter
-                'svm__kernel': ['linear', 'rbf'],  # Kernel type
+                #'svm__kernel': ['linear', 'rbf'],  # Kernel type
                 'svm__class_weight': [None, 'balanced'],  # Handle imbalanced classes
             }
 
@@ -718,6 +718,7 @@ def train_Gen(train_file, val_file, model_dir, student_id=2320824, analysis=None
 metrics_df = train_Gen(f'{data_dir}train.csv', f'{data_dir}valid.csv', model_gen, student_id=STUDENT_ID)
 metrics_df['Model_gen'] = metrics_df['Model']
 del metrics_df['Model']
+#metrics_df = pd.DataFrame()
 
 def test_Gen(test_file, model_dir, student_id=2320824):
 
@@ -800,7 +801,8 @@ def train_Dis(train_file, val_file, model_dir, student_id=2320824, analysis=None
     max_df = best_params['tfidf__max_df']
 
     # Extract SVM parameters
-    svm_kernel = best_params['svm__kernel']
+    #svm_kernel = best_params['svm__kernel']
+    svm_kernel = ''
     svm_C = best_params['svm__C']
     svm_class_weight = best_params['svm__class_weight']
 
@@ -822,7 +824,7 @@ def train_Dis(train_file, val_file, model_dir, student_id=2320824, analysis=None
     y_train_encoded = dis.label_encoder.fit_transform(y_train)
 
     # Train the SVM model
-    svm_model = SVC(kernel=svm_kernel, C=svm_C, class_weight=svm_class_weight)
+    svm_model = LinearSVC(C=svm_C, class_weight=svm_class_weight)
     svm_model.fit(X_train_tfidf, y_train_encoded)
 
     # save the model
